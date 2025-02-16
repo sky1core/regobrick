@@ -2,7 +2,10 @@ module github.com/sky1core/regobrick
 
 go 1.22.7
 
-require github.com/open-policy-agent/opa v1.1.0
+require (
+	github.com/open-policy-agent/opa v1.1.0
+	github.com/shopspring/decimal v1.4.0
+)
 
 require (
 	github.com/OneOfOne/xxhash v1.2.8 // indirect

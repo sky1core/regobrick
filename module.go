@@ -17,7 +17,7 @@ func ParseModule(filename, input string) (*ast.Module, error) {
 		return nil, fmt.Errorf("failed to parse module %q: %w", filename, err)
 	}
 
-	// "import data.regobrick.default_false" 같은 마커가 있는지 확인
+	// Check if there's a marker like 'import data.regobrick.default_false
 	if hasImportRegobrickFeature(mod, "default_false") {
 		addDefaultFalse(mod)
 	}
