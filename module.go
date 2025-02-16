@@ -74,6 +74,12 @@ func addDefaultFalse(mod *ast.Module) {
 	}
 
 	for _, r := range mod.Rules {
+
+		// function rule
+		if len(r.Head.Args) > 0 {
+			continue
+		}
+
 		isIfRule := false
 		if r.Head.Key != nil {
 			if s, ok := r.Head.Key.Value.(ast.String); ok && string(s) == "if" {
@@ -95,7 +101,7 @@ func addDefaultFalse(mod *ast.Module) {
 				continue
 			}
 
-			// Create the default rule, e.g. "default allow[if] = false"
+			// Create the default rule, e.g. "default allow = false"
 			newHead := &ast.Head{
 				Reference: refVal,
 				Value:     ast.BooleanTerm(false),
