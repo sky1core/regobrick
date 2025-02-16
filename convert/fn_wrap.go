@@ -2,8 +2,6 @@ package convert
 
 import (
 	"fmt"
-	"log/slog"
-
 	"github.com/open-policy-agent/opa/v1/ast"
 	"github.com/open-policy-agent/opa/v1/rego"
 )
@@ -147,10 +145,8 @@ func FnWrap0[R any](fn func(rego.BuiltinContext) (R, error)) func(rego.BuiltinCo
 
 func FnWrap1_[T1 any](fn func(rego.BuiltinContext, T1) error) func(rego.BuiltinContext, []*ast.Term) (*ast.Term, error) {
 	return func(bctx rego.BuiltinContext, terms []*ast.Term) (*ast.Term, error) {
-		slog.Warn("FnWrap1_", "terms", terms)
 
 		v0, err := fnWrap1Convert[T1](terms)
-		slog.Warn("FnWrap1_v0", "v0", v0)
 		if err != nil {
 			return nil, err
 		}
