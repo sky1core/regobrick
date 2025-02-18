@@ -91,6 +91,23 @@ func goValueToAst(rv reflect.Value) (ast.Value, error) {
 
 	// Handle maps
 	if rt.Kind() == reflect.Map {
+		keyT := rt.Key()
+		elemT := rt.Elem()
+
+		// map[string]struct{} -> ast.Set
+		if keyT.Kind() == reflect.String && elemT == reflect.TypeOf(struct{}{}) {
+			setVal := ast.NewSet()
+			iter := rv.MapRange()
+			for iter.Next() {
+				kVal := iter.Key()
+				if kVal.Kind() != reflect.String {
+					return nil, fmt.Errorf("map key must be string type (got %v)", kVal.Kind())
+				}
+				setVal.Add(ast.StringTerm(kVal.String()))
+			}
+			return setVal, nil
+		}
+
 		obj := ast.NewObject()
 		iter := rv.MapRange()
 		for iter.Next() {

@@ -8,7 +8,6 @@ import (
 	"github.com/open-policy-agent/opa/v1/ast"
 	"github.com/shopspring/decimal"
 
-	// 실제 프로젝트 경로에 맞춰 수정하세요.
 	. "github.com/sky1core/regobrick/convert"
 )
 
@@ -300,6 +299,51 @@ func TestGoToRego(t *testing.T) {
 		}
 		if strVal != ast.String("some string") {
 			t.Fatalf("expected 'some string', got %v", strVal)
+		}
+	})
+
+	t.Run("map[string]struct{} => ast.Set", func(t *testing.T) {
+		input := map[string]struct{}{
+			"foo": {},
+			"bar": {},
+		}
+		val, err := GoToRego(input)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		// 변환 결과가 ast.Set인지 확인
+		setVal, ok := val.(ast.Set)
+		if !ok {
+			t.Fatalf("expected ast.Set, got %T", val)
+		}
+
+		// Set 내부 요소가 "foo", "bar" 문자열인지 검사
+		if setVal.Len() != 2 {
+			t.Fatalf("expected 2 elements in set, got %d", setVal.Len())
+		}
+
+		for _, want := range []string{"foo", "bar"} {
+			if !setVal.Contains(ast.StringTerm(want)) {
+				t.Fatalf("expected set to contain %q", want)
+			}
+		}
+	})
+
+	t.Run("map[string]struct{} empty => ast.Set", func(t *testing.T) {
+		input := map[string]struct{}{}
+		val, err := GoToRego(input)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		// 빈 map => 길이가 0인 ast.Set
+		setVal, ok := val.(ast.Set)
+		if !ok {
+			t.Fatalf("expected ast.Set, got %T", val)
+		}
+		if setVal.Len() != 0 {
+			t.Fatalf("expected empty set, got length %d", setVal.Len())
 		}
 	})
 }

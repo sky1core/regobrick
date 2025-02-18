@@ -55,7 +55,7 @@ func RegoToGo[T any](val ast.Value) (T, error) {
 		return rv.Interface().(T), nil
 	case reflect.Map:
 		// Map
-		if err := convertRegoObjectToMap(val, rv); err != nil {
+		if err := convertRegoObjectOrSetToMap(val, rv); err != nil {
 			return zero, err
 		}
 		return rv.Interface().(T), nil
@@ -307,8 +307,38 @@ func convertRegoArrayToSlice(aVal ast.Value, rv reflect.Value) error {
 	return nil
 }
 
-// convertRegoObjectToMap maps a Rego ast.Object to a Go map.
-func convertRegoObjectToMap(aVal ast.Value, rv reflect.Value) error {
+// convertRegoObjectOrSetToMap converts a Rego ast.Object or ast.Set to a Go map.
+// If aVal is an ast.Set, it only converts to map[string]struct{}.
+// Otherwise, aVal must be an ast.Object.
+func convertRegoObjectOrSetToMap(aVal ast.Value, rv reflect.Value) error {
+
+	if setVal, ok := aVal.(ast.Set); ok {
+		// map[string]struct{} 변환 로직
+		if rv.IsNil() {
+			rv.Set(reflect.MakeMap(rv.Type()))
+		}
+		keyType := rv.Type().Key()
+		elemType := rv.Type().Elem()
+
+		if keyType.Kind() != reflect.String || elemType != reflect.TypeOf(struct{}{}) {
+			return fmt.Errorf("ast.Set can only convert to map[string]struct{}, got map[%v]%v", keyType, elemType)
+		}
+
+		var iterationErr error
+		setVal.Foreach(func(elem *ast.Term) {
+			if iterationErr != nil {
+				return
+			}
+			s, ok := elem.Value.(ast.String)
+			if !ok {
+				iterationErr = fmt.Errorf("ast.Set element is not ast.String (got %T)", elem.Value)
+				return
+			}
+			rv.SetMapIndex(reflect.ValueOf(string(s)), reflect.ValueOf(struct{}{}))
+		})
+		return iterationErr
+	}
+
 	obj, ok := aVal.(ast.Object)
 	if !ok {
 		return fmt.Errorf("map conversion error: expected ast.Object (got %T)", aVal)

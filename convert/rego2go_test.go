@@ -9,7 +9,6 @@ import (
 	"github.com/open-policy-agent/opa/v1/ast"
 	"github.com/shopspring/decimal"
 
-	// "github.com/sky1core/regobrick/convert" (실제 import 경로에 맞게 변경하세요)
 	. "github.com/sky1core/regobrick/convert"
 )
 
@@ -273,4 +272,51 @@ func TestRegoToGo_NestedStructures(t *testing.T) {
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("expected %+v, got %+v", want, got)
 	}
+}
+
+func TestRegoToGo_Set(t *testing.T) {
+	t.Run("Set to map[string]struct{}", func(t *testing.T) {
+		// Create an ast.Set with string elements
+		setVal := ast.NewSet(
+			ast.StringTerm("foo"),
+			ast.StringTerm("bar"),
+		)
+
+		// Convert to map[string]struct{}
+		got, err := RegoToGo[map[string]struct{}](setVal)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		// Expect keys "foo" and "bar" in the resulting map
+		want := map[string]struct{}{
+			"foo": {},
+			"bar": {},
+		}
+		if !reflect.DeepEqual(got, want) {
+			t.Fatalf("expected %v, got %v", want, got)
+		}
+	})
+
+	t.Run("Set to map[string]struct{} with non-string element => error", func(t *testing.T) {
+		// Create a set that contains an integer instead of a string
+		setVal := ast.NewSet(ast.IntNumberTerm(42))
+
+		// Attempt to convert to map[string]struct{}
+		_, err := RegoToGo[map[string]struct{}](setVal)
+		if err == nil {
+			t.Fatal("expected error for non-string set element, got nil")
+		}
+	})
+
+	t.Run("Set to a non-map type => error", func(t *testing.T) {
+		// Create a valid string set
+		setVal := ast.NewSet(ast.StringTerm("hello"))
+
+		// Try converting to a non-map type (e.g. int)
+		_, err := RegoToGo[int](setVal)
+		if err == nil {
+			t.Fatal("expected error when converting ast.Set to int, got nil")
+		}
+	})
 }
