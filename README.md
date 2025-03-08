@@ -2,8 +2,6 @@
 
 RegoBrick provides a straightforward way to parse and transform Rego modules **without** modifying the OPA engine. It applies certain transformations based on special import markers (for example, `import data.regobrick.default_false`) and also offers convenient helpers for custom builtins and Go↔Rego value conversion.
 
----
-
 ## Overview
 
 - **Default False**  
@@ -18,8 +16,6 @@ RegoBrick provides a straightforward way to parse and transform Rego modules **w
 - **Parse & Transform**  
   The `ParseModule` function (and other internal logic) reads a Rego module, looks for any RegoBrick import markers, and applies the corresponding AST transformations. A higher-level function, `regobrick.New`, provides a convenient way to load multiple modules, apply transforms, and inject them into OPA.
 
----
-
 ## Installation
 
 ```bash
@@ -28,19 +24,21 @@ go get github.com/sky1core/regobrick
 
 Make sure you also have OPA in your `go.mod` if you plan to work with the Rego engine.
 
----
-
 ## Usage
 
-### 1. Transforming Modules (e.g. `default_false`)
+Below is an example of how to use RegoBrick with decimal input data.  
+We create a decimal value from a string to avoid floating-point precision issues, then pass it to RegoBrick as input.
 
-Below is an example of how to apply RegoBrick’s transformations (such as `default_false`) by creating a RegoBrick instance and then passing it to OPA’s `rego.New`. This approach allows you to specify multiple Rego modules—some with RegoBrick features and some without—and optionally add extra imports to each module:
+By including `import data.regobrick.default_false` in your policy, RegoBrick automatically inserts a default rule (for example, `default allow = false`), ensuring that if the condition isn’t met, the rule defaults to `false`.
 
 ```go
+package main
+
 import (
     "context"
-    "log/slog"
+    "fmt"
 
+    "github.com/shopspring/decimal"
     "github.com/open-policy-agent/opa/v1/rego"
     "github.com/sky1core/regobrick"
 )
@@ -48,15 +46,21 @@ import (
 func main() {
     ctx := context.Background()
 
-    // Example policy for the "sub" package (no special RegoBrick feature here).
+    // Create a decimal value from string to avoid floating-point issues.
+    amount, err := decimal.NewFromString("123.45")
+    if err != nil {
+        panic(err)
+    }
+
+    // Example policy for the "sub" package
     subPolicy := `
         package sub
 
         some_rule {
-            input.value == 123
+            input.amount == 123.45
         }
     `
-    // Example policy for the "main" package, which includes the 'default_false' feature.
+    // Example policy for the "main" package
     mainPolicy := `
         package example
 
@@ -67,52 +71,47 @@ func main() {
         }
     `
 
-    // Create a RegoBrick with the modules. The third argument to WithModule is a list
-    // of imports you want to add to that module's AST (in addition to what's in the source).
-    brick, err := regobrick.New(
-        regobrick.WithModule("sub.rego", subPolicy, []string{"data.some.pkg"}),    // Additional import
-        regobrick.WithModule("main.rego", mainPolicy, []string{"data.mycompany.util"}),
+    // Initialize a rego.Rego instance, passing in multiple modules and decimal input.
+    r, err := regobrick.New(
+        regobrick.Module("sub.rego", subPolicy, []string{"data.some.pkg"}),
+        regobrick.Module("main.rego", mainPolicy, []string{"data.mycompany.util"}),
+        regobrick.Input(map[string]interface{}{
+            "user":   "admin",
+            "amount": amount,
+        }),
+    ).Rego(
+        rego.Query("data.example.allow"),
     )
     if err != nil {
-        slog.Error("Failed to create rego brick: ", "error", err)
-        return
+        panic(err)
     }
 
-    // Build a Rego query using the RegoBrick instance. RegoBrick will detect the
-    // 'import data.regobrick.default_false' marker in mainPolicy, and automatically
-    // insert a rule like 'default allow = false'.
-    query, err := rego.New(
-        brick,
-        rego.Query("data.example.allow"),
-    ).PrepareForEval(ctx)
+    // Prepare the query for evaluation.
+    query, err := r.PrepareForEval(ctx)
     if err != nil {
         panic(err)
     }
 
-    // Evaluate as normal
-    rs, err := query.Eval(ctx, rego.EvalInput(map[string]interface{}{
-        "user":  "admin",
-        "value": 123,
-    }))
+    // Evaluate the query. The input is already set via regobrick.Input().
+    rs, err := query.Eval(ctx)
     if err != nil {
         panic(err)
     }
 
-    // The result contains the evaluated value of 'data.example.allow'.
-    // Because of 'default_false', if 'allow if ...' isn't satisfied, it defaults to false.
-    // ...
+    // The result of 'data.example.allow' is in rs.
+    // Because 'allow if ...' is accompanied by 'default allow = false',
+    // if the condition is not met, it defaults to false.
+    fmt.Println("Result:", rs)
 }
 ```
 
-By including `import data.regobrick.default_false` in your policy (`mainPolicy` above), RegoBrick automatically inserts a default rule (for example, `default allow = false`) to ensure that if no other conditions are met, `allow` is set to `false`.
-
----
-
-### 2. Writing Custom Builtins
+## Writing Custom Builtins
 
 You can register a custom function that OPA calls within your policies. RegoBrick provides helper functions (like `RegisterBuiltin1`, `RegisterBuiltin2`, etc.) for builtins that accept typed Go arguments and return typed Go values.
 
 ```go
+package main
+
 import (
     "context"
     "github.com/open-policy-agent/opa/v1/rego"
@@ -125,10 +124,25 @@ func isAdmin(ctx rego.BuiltinContext, user string) (bool, error) {
 }
 
 func main() {
-    // Register the builtin with 1 string argument, returning bool.
-    // The second argument is the categories for this builtin (can be used in FilterCapabilities).
-    // The third argument is whether it's nondeterministic (false here).
-    regobrick.RegisterBuiltin1[string, bool]("is_admin", []string{"my_custom_category"}, false, isAdmin)
+    // RegisterBuiltin1[T1, R] has this signature:
+    //   func RegisterBuiltin1[T1 any, R any](
+    //       name string,
+    //       fn func(rego.BuiltinContext, T1) (R, error),
+    //       opts ...BuiltinRegisterOption,
+    //   )
+    //
+    // So we pass:
+    //   1) The builtin name ("is_admin")
+    //   2) Our Go function (isAdmin)
+    //   3) Any number of BuiltinRegisterOption values, such as categories or nondeterminism.
+
+    regobrick.RegisterBuiltin1[string, bool](
+        "is_admin",
+        isAdmin,
+        // We can set the categories (used in FilterCapabilities) or nondeterministic flag, etc.
+        regobrick.WithCategories("my_custom_category"),
+        // regobrick.WithNondeterministic() // If your builtin is nondeterministic
+    )
 
     // Then in Rego, you can write:
     //    is_admin(input.user) => returns true if user == "admin"
@@ -139,13 +153,13 @@ func main() {
 
 RegoBrick automatically converts the Rego argument to a Go string and converts the returned bool back to a Rego boolean. For more complex use cases, you can define builtins with multiple arguments, different Go types (e.g., `[]string`, custom structs), and so on.
 
----
-
-### 3. Filtering Builtins with `FilterCapabilities`
+## Filtering Builtins with `FilterCapabilities`
 
 If you want to restrict which builtins are allowed when evaluating a policy, you can use the `FilterCapabilities` function to include or exclude builtins by name and category. This gives you a way to lock down OPA so that only certain operations are permitted.
 
 ```go
+package main
+
 import (
     "context"
     "fmt"
@@ -187,9 +201,7 @@ func main() {
 
 In the snippet above, builtins that do not appear in either `allowedNames` or `allowedCats` (and are not in the `coreInfixes` set) will be excluded from the engine’s capabilities, resulting in errors if a policy tries to use them.
 
----
-
-### 4. Converting Rego Values ↔ Go
+## Converting Rego Values ↔ Go
 
 If you want to manually convert values, the `convert` package provides:
 
@@ -201,6 +213,8 @@ If you want to manually convert values, the `convert` package provides:
 These functions support `bool`, `string`, numeric types, `decimal.Decimal`, `time.Time`, slices, maps, structs, and more.
 
 ```go
+package main
+
 import (
     "fmt"
     "github.com/open-policy-agent/opa/v1/ast"
@@ -225,6 +239,5 @@ func convertExample() {
 }
 ```
 
----
-
 With these features, you can seamlessly integrate custom transformations, builtins, capability filtering, and value conversion into your OPA-based workflows—without forking or modifying OPA’s core engine.
+

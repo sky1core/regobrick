@@ -1,72 +1,85 @@
 package regobrick
 
 import (
-	"github.com/open-policy-agent/opa/v1/ast"
 	"github.com/open-policy-agent/opa/v1/rego"
-
-	// module.ParseModule(...) is in this package
+	"github.com/sky1core/regobrick/convert"
 	"github.com/sky1core/regobrick/module"
 )
 
-// RegoModule represents a single Rego module definition.
-type RegoModule struct {
+// ModuleOption holds information about a Rego module.
+type ModuleOption struct {
 	Filename string
 	Source   string
 	Imports  []string
-	AST      *ast.Module
 }
 
-// Option is used to collect module information before parsing.
-type Option func(*[]RegoModule) error
+// Brick holds configuration for RegoBrick.
+type Brick struct {
+	modules  []ModuleOption
+	rawInput interface{}
+}
 
-// WithModule registers a Rego module (filename, source, imports).
-func WithModule(filename, source string, imports []string) Option {
-	return func(modules *[]RegoModule) error {
-		*modules = append(*modules, RegoModule{
+type FnBrickOption = func(*Brick)
+type FnRegoOption = func(*rego.Rego)
+
+// New returns a new Brick.
+func New(options ...FnBrickOption) *Brick {
+	b := &Brick{}
+	for _, opt := range options {
+		opt(b)
+	}
+	return b
+}
+
+// Rego builds a rego.Rego instance using the configured modules and input.
+func (b *Brick) Rego(regoOpts ...FnRegoOption) (*rego.Rego, error) {
+	opts := make([]FnRegoOption, 0)
+
+	for _, m := range b.modules {
+		parsedModule, err := module.ParseModule(m.Filename, m.Source, m.Imports)
+		if err != nil {
+			return nil, err
+		}
+
+		opts = append(opts, rego.ParsedModule(parsedModule))
+	}
+
+	if b.rawInput != nil {
+		parsedInput, err := convert.GoToRego(b.rawInput)
+		if err != nil {
+			return nil, err
+		}
+		opts = append(opts, rego.ParsedInput(parsedInput))
+	}
+
+	opts = append(opts, regoOpts...)
+
+	return rego.New(opts...), nil
+}
+
+// Module adds a single Rego module to the Brick.
+func Module(filename, source string, imports []string) FnBrickOption {
+	return func(b *Brick) {
+		b.modules = append(b.modules, ModuleOption{
 			Filename: filename,
 			Source:   source,
 			Imports:  imports,
 		})
-		return nil
 	}
 }
 
-// New processes the given options, parses each Rego module,
-// and returns a function that can be directly passed to rego.New(...).
-//
-// Example:
-//
-//	fn, err := regobrick.New(
-//	    regobrick.WithModule("modA.rego", regoSrc, []string{"data.regobrick.default_false"}),
-//	)
-//	r := rego.New(rego.Query("data.demo.allow"), fn)
-func New(opts ...Option) (func(*rego.Rego), error) {
-	var modules []RegoModule
-
-	// Collect modules from all options
-	for _, opt := range opts {
-		if err := opt(&modules); err != nil {
-			return nil, err
-		}
+// Modules adds multiple Rego modules to the Brick.
+func Modules(moduleOpts ...ModuleOption) FnBrickOption {
+	return func(b *Brick) {
+		b.modules = append(b.modules, moduleOpts...)
 	}
+}
 
-	// Parse each module
-	for i, rm := range modules {
-		parsed, err := module.ParseModule(rm.Filename, rm.Source, rm.Imports)
-		if err != nil {
-			return nil, err
-		}
-		modules[i].AST = parsed
+// Input sets the input data for evaluation.
+// If the value is a decimal.Decimal, it is converted into a JSON number
+// rather than a string, preserving numeric precision.
+func Input(input interface{}) FnBrickOption {
+	return func(b *Brick) {
+		b.rawInput = input
 	}
-
-	// Return a function pointer that can be passed into rego.New(...)
-	fn := func(r *rego.Rego) {
-		for _, m := range modules {
-			if m.AST != nil {
-				rego.ParsedModule(m.AST)(r)
-			}
-		}
-	}
-
-	return fn, nil
 }

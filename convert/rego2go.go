@@ -11,10 +11,48 @@ import (
 	"github.com/shopspring/decimal"
 )
 
+type numberMode int
+
+const (
+	numberModeFloat64 numberMode = iota
+	numberModeDecimal
+)
+
+type regoToGoConfig struct {
+	numberMode numberMode
+}
+
+// RegoToGoOption is a functional option for RegoToGo.
+type RegoToGoOption func(*regoToGoConfig)
+
+// RegoToGoNumberDecimal makes ast.Number map to decimal.Decimal in interface{} outputs.
+func RegoToGoNumberDecimal() RegoToGoOption {
+	return func(cfg *regoToGoConfig) {
+		cfg.numberMode = numberModeDecimal
+	}
+}
+
+// RegoToGoNumberFloat64 makes ast.Number map to float64 in interface{} outputs (default).
+func RegoToGoNumberFloat64() RegoToGoOption {
+	return func(cfg *regoToGoConfig) {
+		cfg.numberMode = numberModeFloat64
+	}
+}
+
 // RegoToGo converts a Rego ast.Value to a Go type [T].
 // Special handling for time.Time, decimal.Decimal, etc. is done before general struct logic.
-func RegoToGo[T any](val ast.Value) (T, error) {
+func RegoToGo[T any](val ast.Value, opts ...RegoToGoOption) (T, error) {
 	var zero T
+
+	// 기본 설정: float64 모드
+	cfg := &regoToGoConfig{
+		numberMode: numberModeFloat64,
+	}
+	// 옵션 적용
+	for _, opt := range opts {
+		opt(cfg)
+	}
+
 	rt := reflect.TypeOf(zero)
 	if rt == nil {
 		return zero, fmt.Errorf("no type information available")
@@ -24,7 +62,7 @@ func RegoToGo[T any](val ast.Value) (T, error) {
 
 	// Handle time.Time as a single-value string parse.
 	if rt == reflect.TypeOf(time.Time{}) {
-		if err := assignRegoValueToGo(val, rv); err != nil {
+		if err := assignRegoValueToGo(val, rv, cfg.numberMode); err != nil {
 			return zero, err
 		}
 		return rv.Interface().(T), nil
@@ -32,7 +70,7 @@ func RegoToGo[T any](val ast.Value) (T, error) {
 
 	// Handle decimal.Decimal as a single-value numeric parse.
 	if rt == reflect.TypeOf(decimal.Decimal{}) {
-		if err := assignRegoValueToGo(val, rv); err != nil {
+		if err := assignRegoValueToGo(val, rv, cfg.numberMode); err != nil {
 			return zero, err
 		}
 		return rv.Interface().(T), nil
@@ -42,23 +80,25 @@ func RegoToGo[T any](val ast.Value) (T, error) {
 	switch rt.Kind() {
 	case reflect.Struct:
 		// Convert ast.Object to a Go struct.
-		if err := convertRegoObjectToStruct(val, rv); err != nil {
+		if err := convertRegoObjectToStruct(val, rv, cfg.numberMode); err != nil {
 			return zero, err
 		}
 		return rv.Interface().(T), nil
 
 	case reflect.Slice, reflect.Array:
 		// Slice or array
-		if err := convertRegoArrayToSlice(val, rv); err != nil {
+		if err := convertRegoArrayToSlice(val, rv, cfg.numberMode); err != nil {
 			return zero, err
 		}
 		return rv.Interface().(T), nil
+
 	case reflect.Map:
 		// Map
-		if err := convertRegoObjectOrSetToMap(val, rv); err != nil {
+		if err := convertRegoObjectOrSetToMap(val, rv, cfg.numberMode); err != nil {
 			return zero, err
 		}
 		return rv.Interface().(T), nil
+
 	case reflect.Ptr:
 		if _, isNull := val.(ast.Null); isNull {
 			// => rv.Set(nil)
@@ -69,21 +109,21 @@ func RegoToGo[T any](val ast.Value) (T, error) {
 		// If it's a pointer, recursively handle the element
 		ptrTarget := rt.Elem()
 		newVal := reflect.New(ptrTarget)
-		if err := assignRegoValueToGo(val, newVal.Elem()); err != nil {
+		if err := assignRegoValueToGo(val, newVal.Elem(), cfg.numberMode); err != nil {
 			return zero, err
 		}
 		return newVal.Interface().(T), nil
 	}
 
 	// Otherwise, handle scalar types, decimal, etc.
-	if err := assignRegoValueToGo(val, rv); err != nil {
+	if err := assignRegoValueToGo(val, rv, cfg.numberMode); err != nil {
 		return zero, err
 	}
 	return rv.Interface().(T), nil
 }
 
 // assignRegoValueToGo maps a Rego ast.Value to a Go value (scalar, decimal, etc.).
-func assignRegoValueToGo(aVal ast.Value, rv reflect.Value) error {
+func assignRegoValueToGo(aVal ast.Value, rv reflect.Value, nm numberMode) error {
 	rt := rv.Type()
 
 	// Handle decimal.NullDecimal first
@@ -182,10 +222,10 @@ func assignRegoValueToGo(aVal ast.Value, rv reflect.Value) error {
 		if !ok {
 			return fmt.Errorf("struct conversion error: expected ast.Object for type %v, got %T", rt, aVal)
 		}
-		return convertRegoObjectToStruct(obj, rv)
+		return convertRegoObjectToStruct(obj, rv, nm)
 
 	case reflect.Interface:
-		val, err := convertRegoValueToInterface(aVal)
+		val, err := convertRegoValueToInterface(aVal, nm)
 		if err != nil {
 			return err
 		}
@@ -235,7 +275,7 @@ func convertRegoNumberToDecimal(aVal ast.Value, rv reflect.Value) error {
 }
 
 // convertRegoObjectToStruct maps a Rego ast.Object to a Go struct.
-func convertRegoObjectToStruct(aVal ast.Value, rv reflect.Value) error {
+func convertRegoObjectToStruct(aVal ast.Value, rv reflect.Value, nm numberMode) error {
 	obj, ok := aVal.(ast.Object)
 	if !ok {
 		return fmt.Errorf("struct conversion error: expected ast.Object (got %T)", aVal)
@@ -262,7 +302,7 @@ func convertRegoObjectToStruct(aVal ast.Value, rv reflect.Value) error {
 		if !fv.CanSet() {
 			continue
 		}
-		if err := assignRegoValueToGo(term.Value, fv); err != nil {
+		if err := assignRegoValueToGo(term.Value, fv, nm); err != nil {
 			return fmt.Errorf("error converting field '%s': %w", sf.Name, err)
 		}
 	}
@@ -270,7 +310,7 @@ func convertRegoObjectToStruct(aVal ast.Value, rv reflect.Value) error {
 }
 
 // convertRegoArrayToSlice maps a Rego ast.Array to a Go slice or array.
-func convertRegoArrayToSlice(aVal ast.Value, rv reflect.Value) error {
+func convertRegoArrayToSlice(aVal ast.Value, rv reflect.Value, nm numberMode) error {
 	arr, ok := aVal.(*ast.Array)
 	if !ok {
 		return fmt.Errorf("slice/array conversion error: expected ast.Array (got %T)", aVal)
@@ -294,7 +334,7 @@ func convertRegoArrayToSlice(aVal ast.Value, rv reflect.Value) error {
 		if iterationErr != nil {
 			return
 		}
-		if err := assignRegoValueToGo(elem.Value, rv.Index(i)); err != nil {
+		if err := assignRegoValueToGo(elem.Value, rv.Index(i), nm); err != nil {
 			iterationErr = fmt.Errorf("error converting array element %d: %w", i, err)
 			return
 		}
@@ -310,7 +350,7 @@ func convertRegoArrayToSlice(aVal ast.Value, rv reflect.Value) error {
 // convertRegoObjectOrSetToMap converts a Rego ast.Object or ast.Set to a Go map.
 // If aVal is an ast.Set, it only converts to map[string]struct{}.
 // Otherwise, aVal must be an ast.Object.
-func convertRegoObjectOrSetToMap(aVal ast.Value, rv reflect.Value) error {
+func convertRegoObjectOrSetToMap(aVal ast.Value, rv reflect.Value, nm numberMode) error {
 
 	if setVal, ok := aVal.(ast.Set); ok {
 		// map[string]struct{} 변환 로직
@@ -360,13 +400,13 @@ func convertRegoObjectOrSetToMap(aVal ast.Value, rv reflect.Value) error {
 		}
 
 		newKey := reflect.New(keyType).Elem()
-		if err := assignRegoValueToGo(k.Value, newKey); err != nil {
+		if err := assignRegoValueToGo(k.Value, newKey, nm); err != nil {
 			iterationErr = fmt.Errorf("error converting map key: %w", err)
 			return
 		}
 
 		newVal := reflect.New(elemType).Elem()
-		if err := assignRegoValueToGo(val.Value, newVal); err != nil {
+		if err := assignRegoValueToGo(val.Value, newVal, nm); err != nil {
 			iterationErr = fmt.Errorf("error converting map value (key=%v): %w", newKey.Interface(), err)
 			return
 		}
@@ -455,7 +495,7 @@ func parseRegoNumberInto(rv reflect.Value, s string) error {
 }
 
 // convertRegoValueToInterface converts a Rego ast.Value to an interface{}.
-func convertRegoValueToInterface(aVal ast.Value) (interface{}, error) {
+func convertRegoValueToInterface(aVal ast.Value, nm numberMode) (interface{}, error) {
 	switch v := aVal.(type) {
 	case ast.Null:
 		return nil, nil
@@ -464,11 +504,20 @@ func convertRegoValueToInterface(aVal ast.Value) (interface{}, error) {
 	case ast.String:
 		return string(v), nil
 	case ast.Number:
+		if nm == numberModeDecimal {
+			dec, err := decimal.NewFromString(string(v))
+			if err != nil {
+				return nil, fmt.Errorf("error converting ast.Number to decimal: %w", err)
+			}
+			return dec, nil
+		}
+		// default => float64
 		f, ok := v.Float64()
 		if !ok {
 			return nil, fmt.Errorf("error converting ast.Number to float64")
 		}
 		return f, nil
+
 	case *ast.Array:
 		result := make([]interface{}, 0, v.Len())
 		var iterationErr error
@@ -476,7 +525,7 @@ func convertRegoValueToInterface(aVal ast.Value) (interface{}, error) {
 			if iterationErr != nil {
 				return
 			}
-			val, err := convertRegoValueToInterface(elem.Value)
+			val, err := convertRegoValueToInterface(elem.Value, nm)
 			if err != nil {
 				iterationErr = err
 				return
@@ -487,6 +536,7 @@ func convertRegoValueToInterface(aVal ast.Value) (interface{}, error) {
 			return nil, iterationErr
 		}
 		return result, nil
+
 	case ast.Object:
 		result := make(map[string]interface{})
 		var iterationErr error
@@ -499,7 +549,7 @@ func convertRegoValueToInterface(aVal ast.Value) (interface{}, error) {
 				iterationErr = fmt.Errorf("object key is not ast.String (got %T)", k.Value)
 				return
 			}
-			mVal, err := convertRegoValueToInterface(val.Value)
+			mVal, err := convertRegoValueToInterface(val.Value, nm)
 			if err != nil {
 				iterationErr = fmt.Errorf("object value conversion error (key=%s): %w", strKey, err)
 				return
