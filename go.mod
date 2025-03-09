@@ -1,6 +1,6 @@
 module github.com/sky1core/regobrick
 
-go 1.22.7
+go 1.23
 
 require (
 	github.com/open-policy-agent/opa v1.1.0

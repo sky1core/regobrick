@@ -46,12 +46,6 @@ import (
 func main() {
     ctx := context.Background()
 
-    // Create a decimal value from string to avoid floating-point issues.
-    amount, err := decimal.NewFromString("123.45")
-    if err != nil {
-        panic(err)
-    }
-
     // Example policy for the "sub" package
     subPolicy := `
         package sub
@@ -71,29 +65,38 @@ func main() {
         }
     `
 
-    // Initialize a rego.Rego instance, passing in multiple modules and decimal input.
-    r, err := regobrick.New(
+    // Build a rego.Rego object with your modules and input.
+    query, err := rego.New(
+        // Add Rego modules (which will apply "default_false" if that import is found):
         regobrick.Module("sub.rego", subPolicy, []string{"data.some.pkg"}),
         regobrick.Module("main.rego", mainPolicy, []string{"data.mycompany.util"}),
-        regobrick.Input(map[string]interface{}{
-            "user":   "admin",
-            "amount": amount,
-        }),
-    ).Rego(
+
+        // Specify the query we want to evaluate:
         rego.Query("data.example.allow"),
-    )
+		
+    ).PrepareForEval(ctx)
+
     if err != nil {
         panic(err)
     }
 
-    // Prepare the query for evaluation.
-    query, err := r.PrepareForEval(ctx)
+    // Create a decimal value from string to avoid floating-point issues.
+    rawDec, err := decimal.NewFromString("123.45")
     if err != nil {
         panic(err)
     }
 
-    // Evaluate the query. The input is already set via regobrick.Input().
-    rs, err := query.Eval(ctx)
+    // Convert the decimal to a RegoDecimal so it’s handled as a numeric literal.
+    amount := regobrick.NewRegoDecimal(rawDec)
+
+    // Build the input map, including our RegoDecimal.
+    input := map[string]interface{}{
+        "user":   "admin",
+        "amount": amount,
+    }
+
+    // Evaluate using rego.EvalInput to pass input.
+    rs, err := query.Eval(ctx, rego.EvalInput(input))
     if err != nil {
         panic(err)
     }
@@ -200,44 +203,3 @@ func main() {
 ```
 
 In the snippet above, builtins that do not appear in either `allowedNames` or `allowedCats` (and are not in the `coreInfixes` set) will be excluded from the engine’s capabilities, resulting in errors if a policy tries to use them.
-
-## Converting Rego Values ↔ Go
-
-If you want to manually convert values, the `convert` package provides:
-
-- **RegoToGo[T any](ast.Value)**  
-  Convert an AST value to a typed Go value.
-- **GoToRego(interface{})**  
-  Convert a Go value to an AST term.
-
-These functions support `bool`, `string`, numeric types, `decimal.Decimal`, `time.Time`, slices, maps, structs, and more.
-
-```go
-package main
-
-import (
-    "fmt"
-    "github.com/open-policy-agent/opa/v1/ast"
-    "github.com/sky1core/regobrick/convert"
-)
-
-func convertExample() {
-    // Suppose we have a Rego AST number
-    regoNumber := ast.Number("42")
-    goVal, err := convert.RegoToGo[int](regoNumber)
-    if err != nil {
-        panic(err)
-    }
-    fmt.Println("Converted to Go int:", goVal) // 42
-
-    // Convert back to a Rego term
-    term, err := convert.GoToRego(goVal)
-    if err != nil {
-        panic(err)
-    }
-    fmt.Println("Converted back to Rego term:", term)
-}
-```
-
-With these features, you can seamlessly integrate custom transformations, builtins, capability filtering, and value conversion into your OPA-based workflows—without forking or modifying OPA’s core engine.
-

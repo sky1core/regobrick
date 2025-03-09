@@ -1,3 +1,5 @@
+// Package module provides utilities for parsing and transforming Rego modules,
+// particularly for detecting and applying regobrick features like "default_false".
 package module
 
 import (
@@ -7,8 +9,9 @@ import (
 	"github.com/open-policy-agent/opa/v1/ast"
 )
 
-// ParseModule parses the given Rego source, adds the provided imports,
-// and applies the "default_false" transform if "import data.regobrick.default_false" is found.
+// ParseModule parses the provided Rego source into an AST module.
+// It optionally appends additional imports, and applies the "default_false"
+// transformation if "import data.regobrick.default_false" is detected.
 func ParseModule(filename, source string, imports []string) (*ast.Module, error) {
 	// 1) Parse the Rego source.
 	mod, err := ast.ParseModule(filename, source)
@@ -32,7 +35,7 @@ func ParseModule(filename, source string, imports []string) (*ast.Module, error)
 	return mod, nil
 }
 
-// addImport splits a path like "data.xxx.yyy" and adds an import to the module.
+// addImport splits a path like "data.xxx.yyy" and adds it as an import to the module.
 func addImport(mod *ast.Module, importPath string) {
 	if importPath == "" {
 		return
@@ -42,7 +45,7 @@ func addImport(mod *ast.Module, importPath string) {
 	var ref ast.Ref
 
 	for i, p := range parts {
-		// 첫 번째 세그먼트가 "data"이면 VarTerm으로 처리
+		// If the first segment is "data", treat it as a VarTerm
 		if i == 0 {
 			ref = append(ref, ast.VarTerm(p))
 		} else {
@@ -55,7 +58,7 @@ func addImport(mod *ast.Module, importPath string) {
 	})
 }
 
-// hasRegobrickFeature checks if the module has an import of the form "import data.regobrick.<feature>".
+// hasRegobrickFeature returns true if the module imports "data.regobrick.<feature>".
 func hasRegobrickFeature(mod *ast.Module, feature string) bool {
 	target := "data.regobrick." + feature
 	for _, imp := range mod.Imports {
@@ -66,8 +69,8 @@ func hasRegobrickFeature(mod *ast.Module, feature string) bool {
 	return false
 }
 
-// addDefaultFalse searches for 'if-rules' (where Head.Key == "if" or no key => boolean rule)
-// and appends a default rule (default <rule> = false) if not already declared.
+// addDefaultFalse inserts a "default <rule> = false" rule for each if-rule without an existing default.
+// In Rego, an if-rule is defined when Head.Key == "if" or no key is specified for a boolean rule.
 func addDefaultFalse(mod *ast.Module) {
 	existing := make(map[string]bool)
 	for _, r := range mod.Rules {

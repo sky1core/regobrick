@@ -1,13 +1,11 @@
 package regobrick
 
 import (
+	"github.com/sky1core/regobrick/internal/builtin"
 	"time"
 
 	"github.com/open-policy-agent/opa/v1/rego"
 	"github.com/open-policy-agent/opa/v1/types"
-	"github.com/shopspring/decimal"
-
-	"github.com/sky1core/regobrick/convert"
 )
 
 // ------------------------------------------------------------
@@ -67,20 +65,13 @@ func regoTypeOf[T any]() types.Type {
 		return types.N
 	case string:
 		return types.S
-	case decimal.Decimal, decimal.NullDecimal:
+	case RegoDecimal:
 		return types.N
 	case time.Time:
 		return types.S
 	default:
 		return types.A
 	}
-}
-
-func wrapOpts(cfg *builtinRegisterConfig) []convert.RegoToGoOption {
-	if cfg.decimalAsDefault {
-		return []convert.RegoToGoOption{convert.RegoToGoNumberDecimal()}
-	}
-	return nil
 }
 
 // ------------------------------------------------------------
@@ -94,14 +85,13 @@ func RegisterBuiltin0_(name string, fn func(rego.BuiltinContext) error, opts ...
 		opt(&cfg)
 	}
 	decl := types.NewFunction(types.Args(), nil)
-	ropts := wrapOpts(&cfg)
 	rego.RegisterBuiltinDyn(
 		&rego.Function{
 			Name:             name,
 			Decl:             decl,
 			Nondeterministic: cfg.nondeterministic,
 		},
-		convert.FnWrap0_(fn, ropts...),
+		builtin.Adapter0_(fn),
 	)
 	storeCustomCategories(name, cfg.categories)
 }
@@ -114,14 +104,13 @@ func RegisterBuiltin1_[T1 any](name string, fn func(rego.BuiltinContext, T1) err
 	}
 	p1 := regoTypeOf[T1]()
 	decl := types.NewFunction(types.Args(p1), nil)
-	ropts := wrapOpts(&cfg)
 	rego.RegisterBuiltinDyn(
 		&rego.Function{
 			Name:             name,
 			Decl:             decl,
 			Nondeterministic: cfg.nondeterministic,
 		},
-		convert.FnWrap1_[T1](fn, ropts...),
+		builtin.Adapter1_[T1](fn),
 	)
 	storeCustomCategories(name, cfg.categories)
 }
@@ -135,14 +124,13 @@ func RegisterBuiltin2_[T1 any, T2 any](name string, fn func(rego.BuiltinContext,
 	p1 := regoTypeOf[T1]()
 	p2 := regoTypeOf[T2]()
 	decl := types.NewFunction(types.Args(p1, p2), nil)
-	ropts := wrapOpts(&cfg)
 	rego.RegisterBuiltinDyn(
 		&rego.Function{
 			Name:             name,
 			Decl:             decl,
 			Nondeterministic: cfg.nondeterministic,
 		},
-		convert.FnWrap2_[T1, T2](fn, ropts...),
+		builtin.Adapter2_[T1, T2](fn),
 	)
 	storeCustomCategories(name, cfg.categories)
 }
@@ -157,14 +145,13 @@ func RegisterBuiltin3_[T1 any, T2 any, T3 any](name string, fn func(rego.Builtin
 	p2 := regoTypeOf[T2]()
 	p3 := regoTypeOf[T3]()
 	decl := types.NewFunction(types.Args(p1, p2, p3), nil)
-	ropts := wrapOpts(&cfg)
 	rego.RegisterBuiltinDyn(
 		&rego.Function{
 			Name:             name,
 			Decl:             decl,
 			Nondeterministic: cfg.nondeterministic,
 		},
-		convert.FnWrap3_[T1, T2, T3](fn, ropts...),
+		builtin.Adapter3_[T1, T2, T3](fn),
 	)
 	storeCustomCategories(name, cfg.categories)
 }
@@ -180,14 +167,13 @@ func RegisterBuiltin4_[T1 any, T2 any, T3 any, T4 any](name string, fn func(rego
 	p3 := regoTypeOf[T3]()
 	p4 := regoTypeOf[T4]()
 	decl := types.NewFunction(types.Args(p1, p2, p3, p4), nil)
-	ropts := wrapOpts(&cfg)
 	rego.RegisterBuiltinDyn(
 		&rego.Function{
 			Name:             name,
 			Decl:             decl,
 			Nondeterministic: cfg.nondeterministic,
 		},
-		convert.FnWrap4_[T1, T2, T3, T4](fn, ropts...),
+		builtin.Adapter4_[T1, T2, T3, T4](fn),
 	)
 	storeCustomCategories(name, cfg.categories)
 }
@@ -204,14 +190,13 @@ func RegisterBuiltin5_[T1 any, T2 any, T3 any, T4 any, T5 any](name string, fn f
 	p4 := regoTypeOf[T4]()
 	p5 := regoTypeOf[T5]()
 	decl := types.NewFunction(types.Args(p1, p2, p3, p4, p5), nil)
-	ropts := wrapOpts(&cfg)
 	rego.RegisterBuiltinDyn(
 		&rego.Function{
 			Name:             name,
 			Decl:             decl,
 			Nondeterministic: cfg.nondeterministic,
 		},
-		convert.FnWrap5_[T1, T2, T3, T4, T5](fn, ropts...),
+		builtin.Adapter5_[T1, T2, T3, T4, T5](fn),
 	)
 	storeCustomCategories(name, cfg.categories)
 }
@@ -228,14 +213,13 @@ func RegisterBuiltin0[R any](name string, fn func(rego.BuiltinContext) (R, error
 	}
 	rType := regoTypeOf[R]()
 	decl := types.NewFunction(types.Args(), rType)
-	ropts := wrapOpts(&cfg)
 	rego.RegisterBuiltinDyn(
 		&rego.Function{
 			Name:             name,
 			Decl:             decl,
 			Nondeterministic: cfg.nondeterministic,
 		},
-		convert.FnWrap0(fn, ropts...),
+		builtin.Adapter0(fn),
 	)
 	storeCustomCategories(name, cfg.categories)
 }
@@ -249,14 +233,13 @@ func RegisterBuiltin1[T1 any, R any](name string, fn func(rego.BuiltinContext, T
 	p1 := regoTypeOf[T1]()
 	rType := regoTypeOf[R]()
 	decl := types.NewFunction(types.Args(p1), rType)
-	ropts := wrapOpts(&cfg)
 	rego.RegisterBuiltinDyn(
 		&rego.Function{
 			Name:             name,
 			Decl:             decl,
 			Nondeterministic: cfg.nondeterministic,
 		},
-		convert.FnWrap1[T1, R](fn, ropts...),
+		builtin.Adapter1[T1, R](fn),
 	)
 	storeCustomCategories(name, cfg.categories)
 }
@@ -271,14 +254,13 @@ func RegisterBuiltin2[T1 any, T2 any, R any](name string, fn func(rego.BuiltinCo
 	p2 := regoTypeOf[T2]()
 	rType := regoTypeOf[R]()
 	decl := types.NewFunction(types.Args(p1, p2), rType)
-	ropts := wrapOpts(&cfg)
 	rego.RegisterBuiltinDyn(
 		&rego.Function{
 			Name:             name,
 			Decl:             decl,
 			Nondeterministic: cfg.nondeterministic,
 		},
-		convert.FnWrap2[T1, T2, R](fn, ropts...),
+		builtin.Adapter2[T1, T2, R](fn),
 	)
 	storeCustomCategories(name, cfg.categories)
 }
@@ -294,14 +276,13 @@ func RegisterBuiltin3[T1 any, T2 any, T3 any, R any](name string, fn func(rego.B
 	p3 := regoTypeOf[T3]()
 	rType := regoTypeOf[R]()
 	decl := types.NewFunction(types.Args(p1, p2, p3), rType)
-	ropts := wrapOpts(&cfg)
 	rego.RegisterBuiltinDyn(
 		&rego.Function{
 			Name:             name,
 			Decl:             decl,
 			Nondeterministic: cfg.nondeterministic,
 		},
-		convert.FnWrap3[T1, T2, T3, R](fn, ropts...),
+		builtin.Adapter3[T1, T2, T3, R](fn),
 	)
 	storeCustomCategories(name, cfg.categories)
 }
@@ -318,14 +299,13 @@ func RegisterBuiltin4[T1 any, T2 any, T3 any, T4 any, R any](name string, fn fun
 	p4 := regoTypeOf[T4]()
 	rType := regoTypeOf[R]()
 	decl := types.NewFunction(types.Args(p1, p2, p3, p4), rType)
-	ropts := wrapOpts(&cfg)
 	rego.RegisterBuiltinDyn(
 		&rego.Function{
 			Name:             name,
 			Decl:             decl,
 			Nondeterministic: cfg.nondeterministic,
 		},
-		convert.FnWrap4[T1, T2, T3, T4, R](fn, ropts...),
+		builtin.Adapter4[T1, T2, T3, T4, R](fn),
 	)
 	storeCustomCategories(name, cfg.categories)
 }
@@ -343,14 +323,13 @@ func RegisterBuiltin5[T1 any, T2 any, T3 any, T4 any, T5 any, R any](name string
 	p5 := regoTypeOf[T5]()
 	rType := regoTypeOf[R]()
 	decl := types.NewFunction(types.Args(p1, p2, p3, p4, p5), rType)
-	ropts := wrapOpts(&cfg)
 	rego.RegisterBuiltinDyn(
 		&rego.Function{
 			Name:             name,
 			Decl:             decl,
 			Nondeterministic: cfg.nondeterministic,
 		},
-		convert.FnWrap5[T1, T2, T3, T4, T5, R](fn, ropts...),
+		builtin.Adapter5[T1, T2, T3, T4, T5, R](fn),
 	)
 	storeCustomCategories(name, cfg.categories)
 }
