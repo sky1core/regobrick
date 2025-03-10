@@ -25,7 +25,3 @@ func NewRegoDecimalFromInt(i int64) RegoDecimal {
 		Decimal: decimal.NewFromInt(i),
 	}
 }
-
-// RegoSet is an alias for types.RegoSet, representing a generic set of comparable elements.
-// It is serialized as a JSON array, removing duplicates on unmarshal.
-type RegoSet[T comparable] = types.RegoSet[T]
