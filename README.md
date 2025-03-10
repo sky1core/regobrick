@@ -10,11 +10,9 @@ RegoBrick provides a straightforward way to parse and transform Rego modules **w
 - **Custom Builtins**  
   Easily register builtins with typed arguments and return values. RegoBrick converts Rego AST terms to Go types and back, so you can write builtins in Go with minimal boilerplate.
 
-- **Rego ↔ Go Conversion**  
-  The `convert` package allows you to map Rego types (e.g. strings, numbers, arrays, objects) to typed Go structs, decimals, `time.Time`, etc., and vice versa.
-
 - **Parse & Transform**  
-  The `ParseModule` function (and other internal logic) reads a Rego module, looks for any RegoBrick import markers, and applies the corresponding AST transformations. A higher-level function, `regobrick.New`, provides a convenient way to load multiple modules, apply transforms, and inject them into OPA.
+  RegoBrick transforms Rego modules by parsing their AST and applying transformations based on special import markers. It integrates seamlessly with OPA's evaluation pipeline without modifying the OPA engine, simplifying the extension of policy logic through modular AST transformations.
+
 
 ## Installation
 
