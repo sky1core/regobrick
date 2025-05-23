@@ -3,7 +3,33 @@ package builtin
 import (
 	"github.com/open-policy-agent/opa/v1/ast"
 	"github.com/open-policy-agent/opa/v1/rego"
+	"reflect"
 )
+
+func isNil(v any) bool {
+	if v == nil {
+		return true
+	}
+	rv := reflect.ValueOf(v)
+	switch rv.Kind() {
+	case reflect.Ptr, reflect.Slice, reflect.Map,
+		reflect.Func, reflect.Chan, reflect.Interface:
+		return rv.IsNil()
+	default:
+		return false
+	}
+}
+
+func toTerm(res any) (*ast.Term, error) {
+	if isNil(res) {
+		return ast.NullTerm(), nil
+	}
+	val, err := ast.InterfaceToValue(res)
+	if err != nil {
+		return nil, err
+	}
+	return ast.NewTerm(val), nil
+}
 
 func Adapter0_(fn func(rego.BuiltinContext) error) func(rego.BuiltinContext, []*ast.Term) (*ast.Term, error) {
 	return func(bctx rego.BuiltinContext, terms []*ast.Term) (*ast.Term, error) {
@@ -21,11 +47,7 @@ func Adapter0[R any](fn func(rego.BuiltinContext) (R, error)) func(rego.BuiltinC
 		if err != nil {
 			return nil, err
 		}
-		val, convErr := ast.InterfaceToValue(res)
-		if convErr != nil {
-			return nil, convErr
-		}
-		return ast.NewTerm(val), nil
+		return toTerm(res)
 	}
 }
 
@@ -52,11 +74,7 @@ func Adapter1[T1 any, R any](fn func(rego.BuiltinContext, T1) (R, error)) func(r
 		if fnErr != nil {
 			return nil, fnErr
 		}
-		val, convErr := ast.InterfaceToValue(res)
-		if convErr != nil {
-			return nil, convErr
-		}
-		return ast.NewTerm(val), nil
+		return toTerm(res)
 	}
 }
 
@@ -83,11 +101,7 @@ func Adapter2[T1 any, T2 any, R any](fn func(rego.BuiltinContext, T1, T2) (R, er
 		if fnErr != nil {
 			return nil, fnErr
 		}
-		val, convErr := ast.InterfaceToValue(res)
-		if convErr != nil {
-			return nil, convErr
-		}
-		return ast.NewTerm(val), nil
+		return toTerm(res)
 	}
 }
 
@@ -114,11 +128,7 @@ func Adapter3[T1 any, T2 any, T3 any, R any](fn func(rego.BuiltinContext, T1, T2
 		if fnErr != nil {
 			return nil, fnErr
 		}
-		val, convErr := ast.InterfaceToValue(res)
-		if convErr != nil {
-			return nil, convErr
-		}
-		return ast.NewTerm(val), nil
+		return toTerm(res)
 	}
 }
 
@@ -145,11 +155,7 @@ func Adapter4[T1 any, T2 any, T3 any, T4 any, R any](fn func(rego.BuiltinContext
 		if fnErr != nil {
 			return nil, fnErr
 		}
-		val, convErr := ast.InterfaceToValue(res)
-		if convErr != nil {
-			return nil, convErr
-		}
-		return ast.NewTerm(val), nil
+		return toTerm(res)
 	}
 }
 
@@ -176,10 +182,6 @@ func Adapter5[T1 any, T2 any, T3 any, T4 any, T5 any, R any](fn func(rego.Builti
 		if fnErr != nil {
 			return nil, fnErr
 		}
-		val, convErr := ast.InterfaceToValue(res)
-		if convErr != nil {
-			return nil, convErr
-		}
-		return ast.NewTerm(val), nil
+		return toTerm(res)
 	}
 }
