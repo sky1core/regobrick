@@ -24,7 +24,6 @@ func TestRegisterBuiltin2WithAllOptions(t *testing.T) {
 		testBuiltin,
 		WithCategories("test_category", "custom_category"),
 		WithNondeterministic(),
-		WithDefaultDecimal(),
 	)
 
 	policy := `package test
@@ -88,7 +87,6 @@ func TestRegisterBuiltin3WithAllOptions(t *testing.T) {
 		testBuiltin,
 		WithCategories("math", "arithmetic"),
 		WithNondeterministic(),
-		WithDefaultDecimal(),
 	)
 
 	policy := `package test
@@ -163,7 +161,6 @@ func TestRegisterBuiltin0WithAllOptions(t *testing.T) {
 		testBuiltin,
 		WithCategories("utility", "constants"),
 		WithNondeterministic(),
-		WithDefaultDecimal(),
 	)
 
 	policy := `package test
@@ -228,7 +225,6 @@ func TestErrorOnlyBuiltinsWithAllOptions(t *testing.T) {
 		testBuiltin0,
 		WithCategories("validation", "checks"),
 		WithNondeterministic(),
-		WithDefaultDecimal(),
 	)
 
 	// Test RegisterBuiltin1_ with all options
@@ -245,7 +241,6 @@ func TestErrorOnlyBuiltinsWithAllOptions(t *testing.T) {
 		testBuiltin1,
 		WithCategories("validation", "string_checks"),
 		WithNondeterministic(),
-		WithDefaultDecimal(),
 	)
 
 	// Test the error-only builtins in conditions

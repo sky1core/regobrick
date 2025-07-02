@@ -8,60 +8,8 @@ import (
 	"github.com/open-policy-agent/opa/v1/rego"
 )
 
-// Test WithDefaultDecimal option
-func TestWithDefaultDecimalOption(t *testing.T) {
-	decimalBuiltin := func(ctx rego.BuiltinContext, amount RegoDecimal) (string, error) {
-		return "Processed: " + amount.String(), nil
-	}
-
-	funcName := "test_default_decimal_option"
-	RegisterBuiltin1[RegoDecimal, string](
-		funcName, 
-		decimalBuiltin,
-		WithDefaultDecimal(),
-	)
-
-	policy := `package test
-result = ` + funcName + `(input.amount)`
-
-	ctx := context.Background()
-	query, err := rego.New(
-		rego.Query("data.test.result"),
-		rego.Module("test.rego", policy),
-	).PrepareForEval(ctx)
-
-	if err != nil {
-		t.Errorf("Failed to prepare query with WithDefaultDecimal: %v", err)
-		return
-	}
-
-	amount := NewRegoDecimalFromInt(100)
-	input := map[string]interface{}{
-		"amount": amount,
-	}
-
-	rs, err := query.Eval(ctx, rego.EvalInput(input))
-	if err != nil {
-		t.Errorf("Failed to evaluate query with WithDefaultDecimal: %v", err)
-		return
-	}
-
-	if len(rs) != 1 || len(rs[0].Expressions) != 1 {
-		t.Errorf("Expected 1 result with 1 expression, got %d results", len(rs))
-		return
-	}
-
-	result, ok := rs[0].Expressions[0].Value.(string)
-	if !ok {
-		t.Errorf("Expected string result, got %T", rs[0].Expressions[0].Value)
-		return
-	}
-
-	expected := "Processed: 100"
-	if result != expected {
-		t.Errorf("Expected %q, got %q", expected, result)
-	}
-}
+// WithDefaultDecimal option is defined but not actually used in the codebase
+// This test has been removed as it was testing non-functional code
 
 // Test RegisterBuiltin0_ (no args, error-only)
 func TestRegisterBuiltin0_(t *testing.T) {

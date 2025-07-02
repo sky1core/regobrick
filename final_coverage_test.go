@@ -23,7 +23,6 @@ func TestRegisterBuiltin2_AllOptions(t *testing.T) {
 		testBuiltin,
 		WithCategories("validation", "error_check"),
 		WithNondeterministic(),
-		WithDefaultDecimal(),
 	)
 
 	policy := `package test
@@ -79,7 +78,6 @@ func TestRegisterBuiltin3_AllOptions(t *testing.T) {
 		testBuiltin,
 		WithCategories("math", "validation"),
 		WithNondeterministic(),
-		WithDefaultDecimal(),
 	)
 
 	policy := `package test
@@ -135,7 +133,6 @@ func TestRegisterBuiltin4_AllOptions(t *testing.T) {
 		testBuiltin,
 		WithCategories("math", "sum_validation"),
 		WithNondeterministic(),
-		WithDefaultDecimal(),
 	)
 
 	policy := `package test
@@ -191,7 +188,6 @@ func TestRegisterBuiltin5_AllOptions(t *testing.T) {
 		testBuiltin,
 		WithCategories("math", "sum_validation", "five_args"),
 		WithNondeterministic(),
-		WithDefaultDecimal(),
 	)
 
 	policy := `package test
@@ -244,7 +240,6 @@ func TestRegisterBuiltin4_ReturnAllOptions(t *testing.T) {
 		testBuiltin,
 		WithCategories("math", "addition"),
 		WithNondeterministic(),
-		WithDefaultDecimal(),
 	)
 
 	policy := `package test
@@ -307,7 +302,6 @@ func TestRegisterBuiltin5_ReturnAllOptions(t *testing.T) {
 		testBuiltin,
 		WithCategories("math", "addition", "five_params"),
 		WithNondeterministic(),
-		WithDefaultDecimal(),
 	)
 
 	policy := `package test
