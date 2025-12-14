@@ -69,8 +69,9 @@ func hasRegobrickFeature(mod *ast.Module, feature string) bool {
 	return false
 }
 
-// addDefaultFalse inserts a "default <rule> = false" rule for each if-rule without an existing default.
-// In Rego, an if-rule is defined when Head.Key == "if" or no key is specified for a boolean rule.
+// addDefaultFalse inserts a "default <rule> = false" rule for each boolean rule without an existing default.
+// A boolean rule is one where Head.Key is nil and Head.Value is nil or Boolean type.
+// Complete rules (e.g., x := 1) are excluded since their Head.Value is a non-boolean type.
 func addDefaultFalse(mod *ast.Module) {
 	existing := make(map[string]bool)
 	for _, r := range mod.Rules {
@@ -85,17 +86,20 @@ func addDefaultFalse(mod *ast.Module) {
 			continue
 		}
 
-		isIfRule := false
-		if r.Head.Key != nil {
-			if s, ok := r.Head.Key.Value.(ast.String); ok && string(s) == "if" {
-				isIfRule = true
+		// Boolean rule 판별:
+		// - Head.Key가 nil (partial rule이 아님)
+		// - Head.Value가 nil이거나 Boolean 타입
+		// Complete rule (x := 1)은 Head.Value가 Number/String 등이므로 제외
+		isBooleanRule := false
+		if r.Head.Key == nil {
+			if r.Head.Value == nil {
+				isBooleanRule = true
+			} else if _, ok := r.Head.Value.Value.(ast.Boolean); ok {
+				isBooleanRule = true
 			}
-		} else {
-			// Boolean rule => treat as an if-rule.
-			isIfRule = true
 		}
 
-		if isIfRule {
+		if isBooleanRule {
 			refVal := r.Head.Ref()
 			if refVal == nil {
 				continue

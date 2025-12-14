@@ -2,17 +2,40 @@
 
 RegoBrick provides a straightforward way to parse and transform Rego modules **without** modifying the OPA engine. It applies certain transformations based on special import markers (for example, `import data.regobrick.default_false`) and also offers convenient helpers for custom builtins and Go↔Rego value conversion.
 
+## Number Type
+
+`regobrick.Number` is an alias for `json.Number`, used to pass numeric values to Rego without floating-point precision loss.
+
+```go
+input := map[string]any{
+    "price":    regobrick.Number("123.45"),
+    "quantity": regobrick.Number("10"),
+}
+```
+
+**Contract:**
+- Exponent notation (`1e-8`, `2.5E10`) is **not supported**
+- If exponent notation is used with `UseDecimalArithmetic()`:
+  - Default mode: operation silently fails (rule not satisfied, no result)
+  - `StrictBuiltinErrors(true)`: returns `eval_builtin_error`
+- Input validation is the caller's responsibility
+
+**Precision Limits (udecimal):**
+- Maximum **19 decimal places**
+- Range: ±34,028,236,692,093,846,346.3374607431768211455
+- Exceeding 19 decimal places results in **truncation** (not rounding)
+- Sufficient for: BTC (8 decimals), ETH (18 decimals), fiat currencies
+
 ## Overview
 
-- **Default False**  
-  If your Rego module imports `data.regobrick.default_false`, RegoBrick will automatically insert a `default` rule that evaluates to `false` for any “if” or boolean rules. This helps ensure you don’t forget to explicitly set them to `false` when not satisfied.
+- **Default False**
+  If your Rego module imports `data.regobrick.default_false`, RegoBrick will automatically insert a `default` rule that evaluates to `false` for any "if" or boolean rules. This helps ensure you don't forget to explicitly set them to `false` when not satisfied.
 
-- **Custom Builtins**  
+- **Custom Builtins**
   Easily register builtins with typed arguments and return values. RegoBrick converts Rego AST terms to Go types and back, so you can write builtins in Go with minimal boilerplate.
 
-- **Parse & Transform**  
-  RegoBrick transforms Rego modules by parsing their AST and applying transformations based on special import markers. It integrates seamlessly with OPA's evaluation pipeline without modifying the OPA engine, simplifying the extension of policy logic through modular AST transformations.
-
+- **Operator Overloading**
+  Optionally override Rego's arithmetic and comparison operators with precision decimal operations.
 
 ## Installation
 
@@ -24,10 +47,8 @@ Make sure you also have OPA in your `go.mod` if you plan to work with the Rego e
 
 ## Usage
 
-Below is an example of how to use RegoBrick with decimal input data.  
-We create a decimal value from a string to avoid floating-point precision issues, then pass it to RegoBrick as input.
-
-By including `import data.regobrick.default_false` in your policy, RegoBrick automatically inserts a default rule (for example, `default allow = false`), ensuring that if the condition isn’t met, the rule defaults to `false`.
+Below is an example of how to use RegoBrick with Number input data.
+By including `import data.regobrick.default_false` in your policy, RegoBrick automatically inserts a default rule (for example, `default allow = false`), ensuring that if the condition isn't met, the rule defaults to `false`.
 
 ```go
 package main
@@ -35,8 +56,8 @@ package main
 import (
     "context"
     "fmt"
+    "log"
 
-    "github.com/shopspring/decimal"
     "github.com/open-policy-agent/opa/v1/rego"
     "github.com/sky1core/regobrick"
 )
@@ -71,32 +92,23 @@ func main() {
 
         // Specify the query we want to evaluate:
         rego.Query("data.example.allow"),
-		
+
     ).PrepareForEval(ctx)
 
     if err != nil {
-        panic(err)
+        log.Fatal(err)
     }
 
-    // Create a decimal value from string to avoid floating-point issues.
-    rawDec, err := decimal.NewFromString("123.45")
-    if err != nil {
-        panic(err)
-    }
-
-    // Convert the decimal to a RegoDecimal so it’s handled as a numeric literal.
-    amount := regobrick.NewRegoDecimal(rawDec)
-
-    // Build the input map, including our RegoDecimal.
-    input := map[string]interface{}{
+    // Build the input map with Number values to avoid floating-point issues.
+    input := map[string]any{
         "user":   "admin",
-        "amount": amount,
+        "amount": regobrick.Number("123.45"),
     }
 
     // Evaluate using rego.EvalInput to pass input.
     rs, err := query.Eval(ctx, rego.EvalInput(input))
     if err != nil {
-        panic(err)
+        log.Fatal(err)
     }
 
     // The result of 'data.example.allow' is in rs.
@@ -106,6 +118,26 @@ func main() {
 }
 ```
 
+## Precision Arithmetic
+
+RegoBrick provides operator overloading for precision arithmetic using [udecimal](https://github.com/quagmt/udecimal) internally. Call `UseDecimalArithmetic()` once at startup to replace Rego's default float-based operators.
+
+```go
+func init() {
+    regobrick.UseDecimalArithmetic()
+}
+```
+
+This overloads:
+- Arithmetic: `+`, `-`, `*`, `/`, `%`
+- Comparison: `>`, `>=`, `<`, `<=`, `==`, `!=`
+- Unary: `abs()`, `round()`, `ceil()`, `floor()`
+
+Notes:
+- On error (e.g., divide by zero, invalid number format):
+  - Default mode: operation silently fails (rule not satisfied)
+  - `StrictBuiltinErrors(true)`: returns `eval_builtin_error`
+
 ## Writing Custom Builtins
 
 You can register a custom function that OPA calls within your policies. RegoBrick provides helper functions (like `RegisterBuiltin1`, `RegisterBuiltin2`, etc.) for builtins that accept typed Go arguments and return typed Go values.
@@ -114,7 +146,6 @@ You can register a custom function that OPA calls within your policies. RegoBric
 package main
 
 import (
-    "context"
     "github.com/open-policy-agent/opa/v1/rego"
     "github.com/sky1core/regobrick"
 )
@@ -124,39 +155,45 @@ func isAdmin(ctx rego.BuiltinContext, user string) (bool, error) {
     return user == "admin", nil
 }
 
-func main() {
-    // RegisterBuiltin1[T1, R] has this signature:
-    //   func RegisterBuiltin1[T1 any, R any](
-    //       name string,
-    //       fn func(rego.BuiltinContext, T1) (R, error),
-    //       opts ...BuiltinRegisterOption,
-    //   )
-    //
-    // So we pass:
-    //   1) The builtin name ("is_admin")
-    //   2) Our Go function (isAdmin)
-    //   3) Any number of BuiltinRegisterOption values, such as categories or nondeterminism.
-
+func init() {
     regobrick.RegisterBuiltin1[string, bool](
         "is_admin",
         isAdmin,
-        // We can set the categories (used in FilterCapabilities) or nondeterministic flag, etc.
         regobrick.WithCategories("my_custom_category"),
-        // regobrick.WithNondeterministic() // If your builtin is nondeterministic
     )
-
-    // Then in Rego, you can write:
-    //    is_admin(input.user) => returns true if user == "admin"
-
-    // ...
 }
 ```
 
-RegoBrick automatically converts the Rego argument to a Go string and converts the returned bool back to a Rego boolean. For more complex use cases, you can define builtins with multiple arguments, different Go types (e.g., `[]string`, custom structs), and so on.
+### Memoization with WithMemoize
+
+For expensive computations, use `WithMemoize()` to cache results for the same arguments within a single evaluation:
+
+```go
+regobrick.RegisterBuiltin1[string, int](
+    "expensive_lookup",
+    expensiveLookup,
+    regobrick.WithMemoize(),
+)
+```
+
+### Advanced Options with ConfigureFunction
+
+For advanced use cases not covered by built-in options, use `ConfigureFunction` to directly configure the underlying `rego.Function`:
+
+```go
+regobrick.RegisterBuiltin1[string, int](
+    "custom_func",
+    customFunc,
+    regobrick.ConfigureFunction(func(f *rego.Function) {
+        f.Memoize = true
+        f.Nondeterministic = true
+    }),
+)
+```
 
 ## Filtering Builtins with `FilterCapabilities`
 
-If you want to restrict which builtins are allowed when evaluating a policy, you can use the `FilterCapabilities` function to include or exclude builtins by name and category. This gives you a way to lock down OPA so that only certain operations are permitted.
+If you want to restrict which builtins are allowed when evaluating a policy, you can use the `FilterCapabilities` function to include or exclude builtins by name and category.
 
 ```go
 package main
@@ -164,40 +201,32 @@ package main
 import (
     "context"
     "fmt"
+    "log"
 
     "github.com/open-policy-agent/opa/v1/rego"
     "github.com/sky1core/regobrick"
 )
 
 func main() {
-    // Suppose you want to allow only a small subset of builtins:
-    // by specific names or categories.
-    allowedNames := []string{"is_admin", "concat"}          // e.g., our custom builtin, plus a standard OPA builtin
-    allowedCats := []string{"my_custom_category", "strings"} // categories to allow
+    allowedNames := []string{"is_admin", "concat"}
+    allowedCats := []string{"my_custom_category", "strings"}
 
-    // FilterCapabilities returns an *ast.Capabilities object
-    // that includes only the builtins matching the allowed names/infixes/categories.
     caps := regobrick.FilterCapabilities(allowedNames, allowedCats)
 
-    // Now you can build a Rego query with these restricted capabilities:
     ctx := context.Background()
     query, err := rego.New(
         rego.Query("data.example.allow"),
         rego.Capabilities(caps),
-        // Possibly other Rego options...
     ).PrepareForEval(ctx)
     if err != nil {
-        panic(err)
+        log.Fatal(err)
     }
 
-    // Evaluate the query as usual:
     rs, err := query.Eval(ctx)
     if err != nil {
-        panic(err)
+        log.Fatal(err)
     }
 
     fmt.Println("Query result:", rs)
 }
 ```
-
-In the snippet above, builtins that do not appear in either `allowedNames` or `allowedCats` (and are not in the `coreInfixes` set) will be excluded from the engine’s capabilities, resulting in errors if a policy tries to use them.
