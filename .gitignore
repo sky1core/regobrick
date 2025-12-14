@@ -28,6 +28,5 @@ go.work.sum
 .idea
 .vscode
 
-# Amazon Q - exclude entirely from project
-.amazonq/
-.q_*
+# Local workspace
+local/
