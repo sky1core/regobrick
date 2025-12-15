@@ -9,6 +9,237 @@ import (
 	"github.com/open-policy-agent/opa/v1/rego"
 )
 
+// =============================================================================
+// Number 단위 테스트 (Scan, Value, JSON)
+// =============================================================================
+
+func TestNumber_Scan_String(t *testing.T) {
+	var n Number
+	err := n.Scan("123.456789012345678901234567890")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if n.String() != "123.456789012345678901234567890" {
+		t.Errorf("got %s, want 123.456789012345678901234567890", n.String())
+	}
+}
+
+func TestNumber_Scan_Bytes(t *testing.T) {
+	var n Number
+	err := n.Scan([]byte("987.654321098765432109876543210"))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if n.String() != "987.654321098765432109876543210" {
+		t.Errorf("got %s, want 987.654321098765432109876543210", n.String())
+	}
+}
+
+func TestNumber_Scan_Nil(t *testing.T) {
+	var n Number
+	err := n.Scan(nil)
+	if err == nil {
+		t.Fatal("expected error for NULL, got nil")
+	}
+}
+
+func TestNumber_Scan_Float64(t *testing.T) {
+	var n Number
+	err := n.Scan(float64(123.456))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if n.String() != "123.456" {
+		t.Errorf("got %s, want 123.456", n.String())
+	}
+}
+
+func TestNumber_Scan_Int64(t *testing.T) {
+	var n Number
+	err := n.Scan(int64(12345))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if n.String() != "12345" {
+		t.Errorf("got %s, want 12345", n.String())
+	}
+}
+
+func TestNumber_Value(t *testing.T) {
+	n := Number("123.456789012345678901234567890")
+	val, err := n.Value()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	s, ok := val.(string)
+	if !ok {
+		t.Fatalf("expected string, got %T", val)
+	}
+	if s != "123.456789012345678901234567890" {
+		t.Errorf("got %s, want 123.456789012345678901234567890", s)
+	}
+}
+
+func TestNumber_Scan_EmptyString(t *testing.T) {
+	var n Number
+	err := n.Scan("")
+	if err == nil {
+		t.Fatal("expected error for empty string, got nil")
+	}
+}
+
+func TestNumber_Value_EmptyString(t *testing.T) {
+	var n Number
+	_, err := n.Value()
+	if err == nil {
+		t.Fatal("expected error for empty value, got nil")
+	}
+}
+
+func TestNumber_MarshalJSON_EmptyString(t *testing.T) {
+	// json.Number는 빈 문자열을 0으로 출력 (Go 관례)
+	var n Number
+	b, err := json.Marshal(n)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if string(b) != "0" {
+		t.Errorf("expected 0, got %s", b)
+	}
+}
+
+func TestNumber_UnmarshalJSON_Null(t *testing.T) {
+	// json.Number는 null을 빈 문자열로 처리.
+	// 빈 문자열은 MarshalJSON에서 0으로 출력.
+	var n Number
+	err := json.Unmarshal([]byte("null"), &n)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if n.String() != "" {
+		t.Errorf("expected empty string, got %q", n.String())
+	}
+	// 빈 문자열 → 0으로 출력 (Go 관례)
+	b, err := json.Marshal(n)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if string(b) != "0" {
+		t.Errorf("expected 0, got %s", b)
+	}
+}
+
+func TestNumber_MarshalJSON(t *testing.T) {
+	n := Number("123.456")
+	data, err := json.Marshal(n)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	// 숫자 리터럴 (따옴표 없이)
+	if string(data) != "123.456" {
+		t.Errorf("got %s, want 123.456", string(data))
+	}
+}
+
+func TestNumber_MarshalJSON_InStruct(t *testing.T) {
+	type Record struct {
+		Price Number `json:"price"`
+	}
+	r := Record{Price: Number("999.888")}
+	data, err := json.Marshal(r)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if string(data) != `{"price":999.888}` {
+		t.Errorf("got %s, want {\"price\":999.888}", string(data))
+	}
+}
+
+func TestNumber_UnmarshalJSON(t *testing.T) {
+	var n Number
+	err := json.Unmarshal([]byte("456.789"), &n)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if n.String() != "456.789" {
+		t.Errorf("got %s, want 456.789", n.String())
+	}
+}
+
+func TestNumber_UnmarshalJSON_InStruct(t *testing.T) {
+	type Record struct {
+		Price Number `json:"price"`
+	}
+	var r Record
+	err := json.Unmarshal([]byte(`{"price": 111.222}`), &r)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if r.Price.String() != "111.222" {
+		t.Errorf("got %s, want 111.222", r.Price.String())
+	}
+}
+
+func TestNumber_UnmarshalJSON_Precision(t *testing.T) {
+	// JSON Unmarshal이 float64를 거치지 않고 정밀도를 보존하는지 확인
+	type Record struct {
+		Val Number `json:"val"`
+	}
+	// 38자리 - float64는 약 15~17자리만 표현 가능
+	input := `{"val": 12345678901234567890123456789012345678.12}`
+	var r Record
+	err := json.Unmarshal([]byte(input), &r)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	// 정밀도가 보존되어야 함
+	expected := "12345678901234567890123456789012345678.12"
+	if r.Val.String() != expected {
+		t.Errorf("precision loss: got %s, want %s", r.Val.String(), expected)
+	}
+}
+
+func TestNumber_Roundtrip_ScanValue(t *testing.T) {
+	// Scan → Value 왕복 테스트
+	precision := "123456789012345678901234567890.12345678901234567890"
+	var n Number
+	if err := n.Scan(precision); err != nil {
+		t.Fatalf("Scan error: %v", err)
+	}
+	val, err := n.Value()
+	if err != nil {
+		t.Fatalf("Value error: %v", err)
+	}
+	if val != precision {
+		t.Errorf("roundtrip failed: got %s, want %s", val, precision)
+	}
+}
+
+func TestNumber_Roundtrip_JSON(t *testing.T) {
+	// Marshal → Unmarshal 왕복 테스트
+	type Record struct {
+		Price Number `json:"price"`
+	}
+	orig := Record{Price: Number("999.888777666555444333")}
+	data, err := json.Marshal(orig)
+	if err != nil {
+		t.Fatalf("Marshal error: %v", err)
+	}
+
+	var parsed Record
+	if err := json.Unmarshal(data, &parsed); err != nil {
+		t.Fatalf("Unmarshal error: %v", err)
+	}
+
+	if orig.Price.String() != parsed.Price.String() {
+		t.Errorf("roundtrip failed: got %s, want %s", parsed.Price.String(), orig.Price.String())
+	}
+}
+
+// =============================================================================
+// Rego 통합 테스트 (기존)
+// =============================================================================
+
 func TestNumber_WithDecimalOperators(t *testing.T) {
 	ensureDecimalArithmeticEnabled()
 
@@ -19,10 +250,10 @@ func TestNumber_WithDecimalOperators(t *testing.T) {
 		op       string
 		expected string
 	}{
-		{"add", "1.1", "2.2", "+", "3.3"},
-		{"sub", "5.5", "2.2", "-", "3.3"},
-		{"mul", "2.5", "4", "*", "10"},
-		{"div", "10", "4", "/", "2.5"},
+		{"add", Number("1.1"), Number("2.2"), "+", "3.3"},
+		{"sub", Number("5.5"), Number("2.2"), "-", "3.3"},
+		{"mul", Number("2.5"), Number("4"), "*", "10"},
+		{"div", Number("10"), Number("4"), "/", "2.5"},
 	}
 
 	for _, tt := range tests {
@@ -164,10 +395,10 @@ func TestNumber_Comparison(t *testing.T) {
 		op       string
 		expected bool
 	}{
-		{"gt_true", "3.3", "2.2", ">", true},
-		{"gt_false", "2.2", "3.3", ">", false},
-		{"eq_true", "3.3", "3.3", "==", true},
-		{"eq_false", "3.3", "2.2", "==", false},
+		{"gt_true", Number("3.3"), Number("2.2"), ">", true},
+		{"gt_false", Number("2.2"), Number("3.3"), ">", false},
+		{"eq_true", Number("3.3"), Number("3.3"), "==", true},
+		{"eq_false", Number("3.3"), Number("2.2"), "==", false},
 	}
 
 	for _, tt := range tests {
@@ -215,10 +446,10 @@ func TestNumber_UnaryOperations(t *testing.T) {
 		op       string
 		expected string
 	}{
-		{"abs_neg", "-3.3", "abs(input.n)", "3.3"},
-		{"round", "3.5", "round(input.n)", "4"},
-		{"ceil", "3.1", "ceil(input.n)", "4"},
-		{"floor", "3.9", "floor(input.n)", "3"},
+		{"abs_neg", Number("-3.3"), "abs(input.n)", "3.3"},
+		{"round", Number("3.5"), "round(input.n)", "4"},
+		{"ceil", Number("3.1"), "ceil(input.n)", "4"},
+		{"floor", Number("3.9"), "floor(input.n)", "3"},
 	}
 
 	for _, tt := range tests {
@@ -260,43 +491,26 @@ func TestNumber_FormatVariations(t *testing.T) {
 	// 다양한 형태의 Number 표현이 동일하게 처리되는지 확인
 	// udecimal.Parse가 정규화하므로 동등한 값은 동일하게 비교되어야 함
 
-	tests := []struct {
-		name string
-		a, b Number
-		op   string
-		want bool
+	// 비교 테스트
+	comparisonTests := []struct {
+		name     string
+		a, b     Number
+		wantEq   bool
 	}{
-		// 정수 표현 차이
-		{"int_vs_decimal", "1", "1.0", "==", true},
-		{"int_vs_decimal_zeros", "1", "1.00", "==", true},
-		{"decimal_zeros", "1.0", "1.00", "==", true},
-
-		// 소수점 표현 차이 (JSON 숫자는 반드시 정수부 필요, ".5"는 invalid)
-		{"trailing_zeros", "0.5", "0.50", "==", true},
-		{"trailing_zeros2", "0.500", "0.5", "==", true},
-
-		// 음수/양수 0
-		{"zero_vs_neg_zero", "0", "-0", "==", true},
-		{"zero_variations", "0.0", "0.00", "==", true},
-
-		// 연산 결과 비교
-		{"add_format", "1.0", "1", "+", true}, // 1.0 + 1 의 결과가 정상적으로 나오는지
+		{"int_vs_decimal", Number("1"), Number("1.0"), true},
+		{"int_vs_decimal_zeros", Number("1"), Number("1.00"), true},
+		{"decimal_zeros", Number("1.0"), Number("1.00"), true},
+		{"trailing_zeros", Number("0.5"), Number("0.50"), true},
+		{"trailing_zeros2", Number("0.500"), Number("0.5"), true},
+		{"zero_vs_neg_zero", Number("0"), Number("-0"), true},
+		{"zero_variations", Number("0.0"), Number("0.00"), true},
 	}
 
-	for _, tt := range tests {
+	for _, tt := range comparisonTests {
 		t.Run(tt.name, func(t *testing.T) {
-			var module string
-			if tt.op == "==" {
-				module = `package test
+			module := `package test
 result := input.a == input.b
 `
-			} else {
-				// 연산 테스트: 결과가 나오면 성공
-				module = `package test
-result := input.a ` + tt.op + ` input.b
-`
-			}
-
 			ctx := context.Background()
 			query, err := rego.New(
 				rego.Query("data.test.result"),
@@ -306,11 +520,7 @@ result := input.a ` + tt.op + ` input.b
 				t.Fatalf("prepare error: %v", err)
 			}
 
-			input := map[string]any{
-				"a": tt.a,
-				"b": tt.b,
-			}
-
+			input := map[string]any{"a": tt.a, "b": tt.b}
 			rs, err := query.Eval(ctx, rego.EvalInput(input))
 			if err != nil {
 				t.Fatalf("eval error: %v", err)
@@ -320,13 +530,53 @@ result := input.a ` + tt.op + ` input.b
 				t.Fatal("no result")
 			}
 
-			if tt.op == "==" {
-				result := rs[0].Expressions[0].Value.(bool)
-				if result != tt.want {
-					t.Errorf("got %v, want %v", result, tt.want)
-				}
+			result := rs[0].Expressions[0].Value.(bool)
+			if result != tt.wantEq {
+				t.Errorf("got %v, want %v", result, tt.wantEq)
 			}
-			// 연산의 경우 결과가 있으면 성공
+		})
+	}
+
+	// 연산 테스트 (기대 결과 명시)
+	arithmeticTests := []struct {
+		name       string
+		a, b       Number
+		op         string
+		wantResult string
+	}{
+		{"add_format", Number("1.0"), Number("1"), "+", "2"},
+		{"add_decimals", Number("1.5"), Number("2.5"), "+", "4"},
+		{"sub_format", Number("3.0"), Number("1"), "-", "2"},
+	}
+
+	for _, tt := range arithmeticTests {
+		t.Run(tt.name, func(t *testing.T) {
+			module := `package test
+result := input.a ` + tt.op + ` input.b
+`
+			ctx := context.Background()
+			query, err := rego.New(
+				rego.Query("data.test.result"),
+				rego.Module("test.rego", module),
+			).PrepareForEval(ctx)
+			if err != nil {
+				t.Fatalf("prepare error: %v", err)
+			}
+
+			input := map[string]any{"a": tt.a, "b": tt.b}
+			rs, err := query.Eval(ctx, rego.EvalInput(input))
+			if err != nil {
+				t.Fatalf("eval error: %v", err)
+			}
+
+			if len(rs) == 0 || len(rs[0].Expressions) == 0 {
+				t.Fatal("no result")
+			}
+
+			result := rs[0].Expressions[0].Value.(json.Number)
+			if result.String() != tt.wantResult {
+				t.Errorf("got %s, want %s", result.String(), tt.wantResult)
+			}
 		})
 	}
 }

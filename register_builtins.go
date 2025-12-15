@@ -79,7 +79,7 @@ func regoTypeOf[T any]() types.Type {
 		return types.N
 	case string:
 		return types.S
-	case json.Number, RegoDecimal:
+	case json.Number, RegoDecimal, Number:
 		return types.N
 	case time.Time:
 		return types.S

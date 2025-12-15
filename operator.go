@@ -23,6 +23,10 @@ import (
 //   - 범위: ±34,028,236,692,093,846,346.3374607431768211455
 //   - 19자리 초과 시 truncate (반올림 아님)
 //
+// 에러 처리:
+//   - 기본 모드: 연산 실패 시 규칙 미충족 (결과 없음)
+//   - StrictBuiltinErrors(true): eval_builtin_error 반환
+//
 // 이 함수를 호출하면 Rego에서 다음과 같이 자연스럽게 사용 가능:
 //
 //	reduce_price := entry_price * (1 + reduce_rate)
