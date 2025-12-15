@@ -4,7 +4,7 @@ RegoBrick provides a straightforward way to parse and transform Rego modules **w
 
 ## Number Type
 
-`regobrick.Number` is an alias for `json.Number`, used to pass numeric values to Rego without floating-point precision loss.
+`regobrick.Number` is a numeric type based on `json.Number`, used to pass numeric values to Rego without floating-point precision loss. It supports DB operations (sql.Scanner, driver.Valuer) and JSON marshaling.
 
 ```go
 input := map[string]any{
