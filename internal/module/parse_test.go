@@ -1,6 +1,7 @@
 package module
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/open-policy-agent/opa/v1/ast"
@@ -423,117 +424,202 @@ deny if { input.blocked }
 }
 
 // =============================================================================
-// AST 구조 검증 테스트 - OPA 버전별 동작 확인용
+// 조용한 실패(silent failure) 수정 재현 테스트
 // =============================================================================
 
-// TestAST_BooleanRuleStructure boolean rule의 AST 구조 확인
-// 디버그/조사용 - 검증 로직 없음
-func TestAST_BooleanRuleStructure(t *testing.T) {
-	t.Skip("디버그용 테스트 - AST 구조 확인 시 Skip 제거")
+// TestParseModule_PreservesAnnotations METADATA 어노테이션이 보존되는지 확인 (수정 A)
+func TestParseModule_PreservesAnnotations(t *testing.T) {
+	source := `# METADATA
+# title: allow rule
+# description: sample
+package test
 
-	source := `package test
-allow if { input.x == 1 }
+allow if { input.x }
 `
-	mod, err := ast.ParseModule("test.rego", source)
+	mod, err := ParseModule("test.rego", source, nil)
 	if err != nil {
 		t.Fatalf("ParseModule error: %v", err)
 	}
-
-	if len(mod.Rules) != 1 {
-		t.Fatalf("expected 1 rule, got %d", len(mod.Rules))
+	if len(mod.Annotations) == 0 {
+		t.Fatal("expected METADATA annotations to be preserved, got none")
 	}
-
-	r := mod.Rules[0]
-	t.Logf("Boolean rule AST:")
-	t.Logf("  Head.Key = %v (type: %T)", r.Head.Key, r.Head.Key)
-	t.Logf("  Head.Value = %v", r.Head.Value)
-	if r.Head.Value != nil {
-		t.Logf("  Head.Value.Value type = %T", r.Head.Value.Value)
+	if mod.Annotations[0].Title != "allow rule" {
+		t.Errorf("expected annotation title %q, got %q", "allow rule", mod.Annotations[0].Title)
 	}
-	t.Logf("  Head.Args = %v (len: %d)", r.Head.Args, len(r.Head.Args))
-	t.Logf("  Body len = %d", len(r.Body))
 }
 
-// TestAST_CompleteRuleStructure complete rule의 AST 구조 확인
-// 디버그/조사용 - 검증 로직 없음
-func TestAST_CompleteRuleStructure(t *testing.T) {
-	t.Skip("디버그용 테스트 - AST 구조 확인 시 Skip 제거")
-
+// TestParseModule_RemovesMarkerImport default_false 마커 import가 변환 후 제거되는지 확인 (수정 B)
+func TestParseModule_RemovesMarkerImport(t *testing.T) {
 	source := `package test
-x := 1
+import data.regobrick.default_false
+
+allow if { input.x }
 `
-	mod, err := ast.ParseModule("test.rego", source)
+	mod, err := ParseModule("test.rego", source, nil)
 	if err != nil {
 		t.Fatalf("ParseModule error: %v", err)
 	}
-
-	if len(mod.Rules) != 1 {
-		t.Fatalf("expected 1 rule, got %d", len(mod.Rules))
+	for _, imp := range mod.Imports {
+		if ref, ok := imp.Path.Value.(ast.Ref); ok && ref.String() == "data.regobrick.default_false" {
+			t.Fatalf("expected regobrick marker import to be removed, but it remains: %s", imp.String())
+		}
 	}
-
-	r := mod.Rules[0]
-	t.Logf("Complete rule AST:")
-	t.Logf("  Head.Key = %v (type: %T)", r.Head.Key, r.Head.Key)
-	t.Logf("  Head.Value = %v", r.Head.Value)
-	if r.Head.Value != nil {
-		t.Logf("  Head.Value.Value type = %T", r.Head.Value.Value)
-	}
-	t.Logf("  Head.Args = %v (len: %d)", r.Head.Args, len(r.Head.Args))
-	t.Logf("  Body len = %d", len(r.Body))
 }
 
-// TestAST_PartialSetRuleStructure partial set rule의 AST 구조 확인
-// 디버그/조사용 - 검증 로직 없음
-func TestAST_PartialSetRuleStructure(t *testing.T) {
-	t.Skip("디버그용 테스트 - AST 구조 확인 시 Skip 제거")
-
+// TestParseModule_UnknownFeatureErrors 미지 feature 오타는 조용히 무시되지 않고 에러 (수정 C)
+func TestParseModule_UnknownFeatureErrors(t *testing.T) {
 	source := `package test
-items contains x if { x := input.arr[_] }
+import data.regobrick.default_flase
+
+allow if { input.x }
 `
-	mod, err := ast.ParseModule("test.rego", source)
-	if err != nil {
-		t.Fatalf("ParseModule error: %v", err)
+	_, err := ParseModule("test.rego", source, nil)
+	if err == nil {
+		t.Fatal("expected error for unknown regobrick feature, got nil")
 	}
-
-	if len(mod.Rules) != 1 {
-		t.Fatalf("expected 1 rule, got %d", len(mod.Rules))
+	if !strings.Contains(err.Error(), "data.regobrick.default_flase") {
+		t.Errorf("error should mention the offending import, got: %v", err)
 	}
-
-	r := mod.Rules[0]
-	t.Logf("Partial set rule AST:")
-	t.Logf("  Head.Key = %v (type: %T)", r.Head.Key, r.Head.Key)
-	if r.Head.Key != nil {
-		t.Logf("  Head.Key.Value type = %T", r.Head.Key.Value)
+	if !strings.Contains(err.Error(), "default_false") {
+		t.Errorf("error should list known features, got: %v", err)
 	}
-	t.Logf("  Head.Value = %v", r.Head.Value)
-	t.Logf("  Head.Args = %v (len: %d)", r.Head.Args, len(r.Head.Args))
 }
 
-// TestAST_PartialObjectRuleStructure partial object rule의 AST 구조 확인
-// 디버그/조사용 - 검증 로직 없음
-func TestAST_PartialObjectRuleStructure(t *testing.T) {
-	t.Skip("디버그용 테스트 - AST 구조 확인 시 Skip 제거")
-
+// TestParseModule_InvalidImportPathErrors 잘못된 주입 import 경로는 에러 (수정 E)
+func TestParseModule_InvalidImportPathErrors(t *testing.T) {
 	source := `package test
-obj[k] := v if { k := "a"; v := 1 }
+allow if { input.x }
 `
-	mod, err := ast.ParseModule("test.rego", source)
+	_, err := ParseModule("test.rego", source, []string{"data..x"})
+	if err == nil {
+		t.Fatal("expected error for invalid injected import path, got nil")
+	}
+	if !strings.Contains(err.Error(), "data..x") {
+		t.Errorf("error should mention the offending path, got: %v", err)
+	}
+}
+
+// TestParseModule_DeduplicatesBracketNotationImport 브래킷 표기 경로도 Ref 기반으로 dedup (수정 E)
+func TestParseModule_DeduplicatesBracketNotationImport(t *testing.T) {
+	source := `package test
+import data["foo-bar"]
+
+allow if { input.x }
+`
+	mod, err := ParseModule("test.rego", source, []string{`data["foo-bar"]`})
+	if err != nil {
+		t.Fatalf("ParseModule error: %v", err)
+	}
+	count := 0
+	target := ast.MustParseRef(`data["foo-bar"]`)
+	for _, imp := range mod.Imports {
+		if ref, ok := imp.Path.Value.(ast.Ref); ok && ref.Equal(target) {
+			count++
+		}
+	}
+	if count != 1 {
+		t.Fatalf("expected bracket-notation import to be deduplicated to 1, got %d", count)
+	}
+}
+
+// TestParseModule_AliasConflictErrors 기존 import alias와 이름 충돌 시 사전 검사 에러 (수정 E)
+func TestParseModule_AliasConflictErrors(t *testing.T) {
+	source := `package test
+import data.other as helper
+
+result := helper.value
+`
+	_, err := ParseModule("test.rego", source, []string{"data.helper"})
+	if err == nil {
+		t.Fatal("expected alias conflict error, got nil")
+	}
+	if !strings.Contains(err.Error(), "helper") {
+		t.Errorf("error should mention conflicting name, got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "data.other") {
+		t.Errorf("error should mention the existing conflicting import, got: %v", err)
+	}
+}
+
+// TestParseModule_UnknownFeatureViaInjectedImportErrors 주입 imports 경로로 들어온
+// feature 오타도 에러가 나야 함 (검증 순서 수정: validate가 import 주입 뒤에 실행)
+func TestParseModule_UnknownFeatureViaInjectedImportErrors(t *testing.T) {
+	source := `package test
+allow if { input.x }
+`
+	_, err := ParseModule("test.rego", source, []string{"data.regobrick.default_flase"})
+	if err == nil {
+		t.Fatal("expected error for unknown regobrick feature via injected import, got nil")
+	}
+	if !strings.Contains(err.Error(), "data.regobrick.default_flase") {
+		t.Errorf("error should mention the offending import, got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "default_false") {
+		t.Errorf("error should list known features, got: %v", err)
+	}
+}
+
+// TestParseModule_FeatureViaInjectedImportApplies 주입 imports로 정상 feature를
+// 전달하면 transform이 적용되어야 함
+func TestParseModule_FeatureViaInjectedImportApplies(t *testing.T) {
+	source := `package test
+allow if { input.x }
+`
+	mod, err := ParseModule("test.rego", source, []string{"data.regobrick.default_false"})
 	if err != nil {
 		t.Fatalf("ParseModule error: %v", err)
 	}
 
-	if len(mod.Rules) != 1 {
-		t.Fatalf("expected 1 rule, got %d", len(mod.Rules))
+	hasDefault := false
+	for _, r := range mod.Rules {
+		if r.Default && r.Head.Ref().String() == "allow" {
+			hasDefault = true
+		}
+	}
+	if !hasDefault {
+		t.Error("expected default_false transform to apply for injected feature import")
 	}
 
-	r := mod.Rules[0]
-	t.Logf("Partial object rule AST:")
-	t.Logf("  Head.Key = %v (type: %T)", r.Head.Key, r.Head.Key)
-	if r.Head.Key != nil {
-		t.Logf("  Head.Key.Value type = %T", r.Head.Key.Value)
+	// 마커 import는 최종 AST에서 제거되어야 함
+	for _, imp := range mod.Imports {
+		if ref, ok := imp.Path.Value.(ast.Ref); ok && ref.String() == "data.regobrick.default_false" {
+			t.Errorf("expected injected marker import to be removed, but it remains: %s", imp.String())
+		}
 	}
-	t.Logf("  Head.Value = %v", r.Head.Value)
-	t.Logf("  Head.Args = %v (len: %d)", r.Head.Args, len(r.Head.Args))
+}
+
+// TestParseModule_NonDataInputImportPathErrors import 경로는 data 또는 input으로
+// 시작해야 함 (isImportRef head 검사)
+func TestParseModule_NonDataInputImportPathErrors(t *testing.T) {
+	source := `package test
+allow if { input.x }
+`
+	for _, path := range []string{"foo.bar", "abc"} {
+		_, err := ParseModule("test.rego", source, []string{path})
+		if err == nil {
+			t.Errorf("expected error for non data/input import path %q, got nil", path)
+			continue
+		}
+		if !strings.Contains(err.Error(), path) {
+			t.Errorf("error should mention the offending path %q, got: %v", path, err)
+		}
+	}
+
+	// input 루트는 유효해야 함
+	mod, err := ParseModule("test.rego", source, []string{"input.user"})
+	if err != nil {
+		t.Fatalf("expected input-rooted import to be accepted, got: %v", err)
+	}
+	found := false
+	target := ast.MustParseRef("input.user")
+	for _, imp := range mod.Imports {
+		if ref, ok := imp.Path.Value.(ast.Ref); ok && ref.Equal(target) {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("expected input.user import to be added")
+	}
 }
 
 // =============================================================================

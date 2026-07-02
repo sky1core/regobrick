@@ -2,8 +2,10 @@ package regobrick_test
 
 import (
 	"context"
+	"strings"
 	"testing"
 
+	"github.com/open-policy-agent/opa/v1/ast"
 	"github.com/open-policy-agent/opa/v1/rego"
 	"github.com/sky1core/regobrick"
 )
@@ -365,6 +367,109 @@ func TestModule_SyntaxError(t *testing.T) {
 	if err == nil {
 		t.Error("expected syntax error, got nil")
 	}
+}
+
+// TestModule_DefaultFalse_StrictMode default_false 변환된 모듈이 rego.Strict(true)에서
+// 컴파일되는지 확인 (수정 B: 마커 import가 제거되어 unused import 에러가 없어야 함).
+func TestModule_DefaultFalse_StrictMode(t *testing.T) {
+	ctx := context.Background()
+
+	policy := `
+		package test
+		import data.regobrick.default_false
+
+		allow if { input.user == "admin" }
+	`
+
+	query, err := rego.New(
+		rego.Strict(true),
+		regobrick.Module("test.rego", policy, nil),
+		rego.Query("data.test.allow"),
+	).PrepareForEval(ctx)
+	if err != nil {
+		t.Fatalf("expected strict-mode compilation to succeed, got: %v", err)
+	}
+
+	rs, err := query.Eval(ctx, rego.EvalInput(map[string]any{"user": "guest"}))
+	if err != nil {
+		t.Fatalf("Eval failed: %v", err)
+	}
+	if len(rs) == 0 || rs[0].Expressions[0].Value != false {
+		t.Errorf("expected false, got %v", rs)
+	}
+}
+
+// TestModule_FallbackForPlainV0Source v0 문법 소스 + imports 없음 + regobrick 미사용인 경우
+// 기존처럼 rego.Module 폴백으로 동작해야 한다 (수정 D의 폴백 경로).
+func TestModule_FallbackForPlainV0Source(t *testing.T) {
+	ctx := context.Background()
+
+	// v0 문법 (if 없이 = true { ... }) - v1 파서로는 파싱 실패한다.
+	policy := `package test
+allow = true { input.x == 1 }
+`
+
+	query, err := rego.New(
+		rego.SetRegoVersion(ast.RegoV0),
+		regobrick.Module("test.rego", policy, nil),
+		rego.Query("data.test.allow"),
+	).PrepareForEval(ctx)
+	if err != nil {
+		t.Fatalf("expected v0 fallback to compile, got: %v", err)
+	}
+
+	rs, err := query.Eval(ctx, rego.EvalInput(map[string]any{"x": 1}))
+	if err != nil {
+		t.Fatalf("Eval failed: %v", err)
+	}
+	if len(rs) == 0 || rs[0].Expressions[0].Value != true {
+		t.Errorf("expected true from v0 fallback, got %v", rs)
+	}
+}
+
+// TestModule_PanicOnV0WithImports imports를 요청했는데 파싱이 실패하면(v0 문법) panic해야 한다
+// (수정 D의 fail-fast 경로).
+func TestModule_PanicOnV0WithImports(t *testing.T) {
+	policy := `package test
+allow = true { input.x == 1 }
+`
+
+	defer func() {
+		rec := recover()
+		if rec == nil {
+			t.Fatal("expected panic when imports requested but parse failed, got none")
+		}
+		msg, _ := rec.(string)
+		if !strings.Contains(msg, "cannot process module") || !strings.Contains(msg, "test.rego") {
+			t.Errorf("panic message should mention cause and filename, got: %v", rec)
+		}
+	}()
+
+	// imports가 비어있지 않으므로 폴백 없이 panic해야 한다.
+	regobrick.Module("test.rego", policy, []string{"data.helper"})(rego.New())
+}
+
+// TestModule_PanicOnUnknownFeature regobrick feature 오타는 소스가 regobrick을 참조하므로
+// panic으로 이어져야 한다 (수정 C + D).
+func TestModule_PanicOnUnknownFeature(t *testing.T) {
+	policy := `package test
+import data.regobrick.default_flase
+
+allow if { input.x }
+`
+
+	defer func() {
+		rec := recover()
+		if rec == nil {
+			t.Fatal("expected panic for unknown regobrick feature, got none")
+		}
+		msg, _ := rec.(string)
+		if !strings.Contains(msg, "cannot process module") {
+			t.Errorf("panic message should mention cause, got: %v", rec)
+		}
+	}()
+
+	regobrick.Module("typo.rego", policy, nil)(rego.New())
 }
 
 func TestParseModule_Direct(t *testing.T) {
