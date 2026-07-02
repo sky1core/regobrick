@@ -64,6 +64,9 @@ func WithStringCoercion() DecimalArithmeticOption {
 // With UseDecimalArithmetic, comparison operators become numeric-only,
 // and non-numeric string comparisons ("a" < "b") will not work.
 //
+// The % (rem) operator accepts decimal operands (e.g. 10.5 % 3), whereas
+// standard OPA restricts modulo to integers.
+//
 // # Precision limits (udecimal)
 //
 //   - Maximum 19 decimal places
@@ -103,14 +106,14 @@ func UseDecimalArithmetic(opts ...DecimalArithmeticOption) {
 }
 
 func registerDecimalBuiltins() {
-	// 산술 연산자
+	// Arithmetic operators
 	topdown.RegisterBuiltinFunc(ast.Plus.Name, precisionPlus)
 	topdown.RegisterBuiltinFunc(ast.Minus.Name, precisionMinus)
 	topdown.RegisterBuiltinFunc(ast.Multiply.Name, precisionMultiply)
 	topdown.RegisterBuiltinFunc(ast.Divide.Name, precisionDivide)
 	topdown.RegisterBuiltinFunc(ast.Rem.Name, precisionRem)
 
-	// 비교 연산자
+	// Comparison operators
 	topdown.RegisterBuiltinFunc(ast.GreaterThan.Name, precisionGT)
 	topdown.RegisterBuiltinFunc(ast.GreaterThanEq.Name, precisionGTE)
 	topdown.RegisterBuiltinFunc(ast.LessThan.Name, precisionLT)
@@ -118,42 +121,46 @@ func registerDecimalBuiltins() {
 	topdown.RegisterBuiltinFunc(ast.Equal.Name, precisionEqual)
 	topdown.RegisterBuiltinFunc(ast.NotEqual.Name, precisionNotEqual)
 
-	// 단항 연산자
+	// Unary operators
 	topdown.RegisterBuiltinFunc(ast.Abs.Name, precisionAbs)
 	topdown.RegisterBuiltinFunc(ast.Round.Name, precisionRound)
 	topdown.RegisterBuiltinFunc(ast.Ceil.Name, precisionCeil)
 	topdown.RegisterBuiltinFunc(ast.Floor.Name, precisionFloor)
 
-	// 집계 연산자
+	// Aggregate operators
 	topdown.RegisterBuiltinFunc(ast.Sum.Name, precisionSum)
 	topdown.RegisterBuiltinFunc(ast.Product.Name, precisionProduct)
 	topdown.RegisterBuiltinFunc(ast.Max.Name, precisionMax)
 	topdown.RegisterBuiltinFunc(ast.Min.Name, precisionMin)
 }
 
-// maxExpandedLen은 지수 표기 전개 결과 문자열 길이의 상한입니다.
+// maxExpandedLen is the upper bound on the string length of an expanded exponent
+// notation result.
 //
-// udecimal이 표현 가능한 값은 정수부 최대 20자리 + 소수부 최대 19자리 수준이므로
-// (범위 ±34,028,236,692,093,846,346.3374607431768211455), 부호/소수점을 포함해도
-// 유효한 전개 결과는 이 상한을 크게 밑돕니다. 상한을 넘을 것이 확실한 전개는
-// 어차피 udecimal이 거부할 값이므로, strings.Repeat로 거대한 0 문자열을
-// 할당하지 않고(예: input 경로의 1e2000000000은 약 2GB 할당 유발) 원본을
-// 그대로 반환합니다. 그러면 udecimal.Parse가 지수 표기를 invalid format으로
-// 거부하여 기존 정밀도-한계 에러 동작과 동일하게 끝납니다.
+// The values udecimal can represent have at most ~20 integer digits + 19
+// fractional digits (range ±34,028,236,692,093,846,346.3374607431768211455), so
+// even including a sign and decimal point, any valid expansion is well under
+// this bound. An expansion certain to exceed the bound would be rejected by
+// udecimal anyway, so instead of allocating a huge zero string via
+// strings.Repeat (e.g. 1e2000000000 from an input path would trigger ~2GB of
+// allocation) the original string is returned unchanged. udecimal.Parse then
+// rejects the exponent notation as an invalid format, ending in the same
+// precision-limit error behavior as before.
 const maxExpandedLen = 64
 
-// expandExponent는 지수 표기(scientific notation) 숫자 문자열을 평범한 십진
-// 표기로 전개합니다. 예: "1e-8"→"0.00000001", "-2.5E+3"→"-2500", "1.5e0"→"1.5".
+// expandExponent expands a scientific-notation number string into plain decimal
+// notation. E.g. "1e-8"→"0.00000001", "-2.5E+3"→"-2500", "1.5e0"→"1.5".
 //
-// float64를 경유하지 않고 순수 문자열 조작으로 소수점 위치만 이동시키므로
-// 정밀도 손실이 없습니다. 지수 표기가 아니거나(예: "123.45") 형식이 잘못된
-// 문자열은 그대로 반환하여 udecimal.Parse가 판단하도록 넘깁니다.
+// It shifts only the decimal point via pure string manipulation without going
+// through float64, so there is no precision loss. Non-exponent (e.g. "123.45")
+// or malformed strings are returned unchanged for udecimal.Parse to decide on.
 //
-// 전개 결과가 udecimal 범위/정밀도(소수점 이하 19자리)를 벗어나는 경우
-// (예: "1e-25"→"0.0000...1", "1e30") udecimal.Parse가 에러를 반환하며,
-// 이는 문서화된 정밀도 한계입니다. 전개 결과 길이가 maxExpandedLen을 넘을
-// 것이 확실한 거대 지수(예: "1e2000000000")는 할당 폭발을 피하기 위해
-// 전개하지 않고 원본을 그대로 반환합니다 (udecimal이 거부 → 동일한 에러 동작).
+// When the expanded result exceeds udecimal's range/precision (19 fractional
+// digits) (e.g. "1e-25"→"0.0000...1", "1e30"), udecimal.Parse returns an error;
+// this is the documented precision limit. A huge exponent whose expansion is
+// certain to exceed maxExpandedLen (e.g. "1e2000000000") is not expanded and the
+// original string is returned to avoid an allocation blowup (udecimal rejects it
+// → same error behavior).
 func expandExponent(s string) string {
 	ePos := strings.IndexAny(s, "eE")
 	if ePos < 0 {
@@ -163,16 +170,17 @@ func expandExponent(s string) string {
 	mantissa := s[:ePos]
 	exp, err := strconv.Atoi(s[ePos+1:])
 	if err != nil {
-		return s // 지수부가 정수가 아님(int 범위 초과 포함) → udecimal이 거부하도록 위임
+		return s // exponent is not an integer (including out-of-int-range) → let udecimal reject it
 	}
 
-	// 크기 가드 1: 지수 절대값이 상한을 넘으면 전개 결과도 반드시 상한을 넘으므로
-	// 전개하지 않는다. (이후 newExp 계산의 정수 오버플로도 함께 차단)
+	// Size guard 1: if the absolute exponent exceeds the bound, the expansion is
+	// guaranteed to exceed it too, so do not expand. (This also blocks integer
+	// overflow in the later newExp computation.)
 	if exp > maxExpandedLen || exp < -maxExpandedLen {
 		return s
 	}
 
-	// 가수부 부호 분리
+	// Separate the sign of the mantissa.
 	sign := ""
 	if len(mantissa) > 0 && (mantissa[0] == '+' || mantissa[0] == '-') {
 		if mantissa[0] == '-' {
@@ -181,7 +189,7 @@ func expandExponent(s string) string {
 		mantissa = mantissa[1:]
 	}
 
-	// 정수부/소수부 분리
+	// Separate the integer and fractional parts.
 	intPart := mantissa
 	fracPart := ""
 	if dot := strings.IndexByte(mantissa, '.'); dot >= 0 {
@@ -195,15 +203,16 @@ func expandExponent(s string) string {
 	}
 	for i := 0; i < len(digits); i++ {
 		if digits[i] < '0' || digits[i] > '9' {
-			return s // 가수부에 숫자 외 문자 → udecimal이 거부하도록 위임
+			return s // non-digit character in the mantissa → let udecimal reject it
 		}
 	}
 
-	// 값 = digits × 10^(exp - len(fracPart))
+	// value = digits × 10^(exp - len(fracPart))
 	newExp := exp - len(fracPart)
 
-	// 크기 가드 2: 전개 결과 길이를 사전 계산해 상한을 넘으면 전개하지 않는다.
-	// (newExp >= 0: len(digits)+newExp, newExp < 0: 최대 len(digits)+|newExp|+2)
+	// Size guard 2: precompute the expansion length and do not expand if it
+	// exceeds the bound.
+	// (newExp >= 0: len(digits)+newExp, newExp < 0: at most len(digits)+|newExp|+2)
 	absNewExp := newExp
 	if absNewExp < 0 {
 		absNewExp = -absNewExp
@@ -226,16 +235,17 @@ func expandExponent(s string) string {
 	return sign + out
 }
 
-// parseDecimal은 숫자 문자열을 udecimal.Decimal로 파싱합니다.
-// 지수 표기를 먼저 평범한 십진 표기로 전개한 뒤 udecimal.Parse에 넘기므로,
-// "1e-8"과 같은 지수 표기도 정확히 파싱됩니다.
+// parseDecimal parses a numeric string into a udecimal.Decimal.
+// It first expands exponent notation into plain decimal notation before passing
+// it to udecimal.Parse, so exponent notation like "1e-8" is parsed accurately.
 func parseDecimal(s string) (udecimal.Decimal, error) {
 	return udecimal.Parse(expandExponent(s))
 }
 
-// toDecimal은 ast.Value를 udecimal.Decimal로 변환합니다.
-// ast.Number와 ast.String 모두 파싱을 시도하며, 실패 시 false를 반환합니다.
-// 저수준 헬퍼로, stringCoercion 조건은 호출자(isNumericType 등)가 판단합니다.
+// toDecimal converts an ast.Value into a udecimal.Decimal.
+// It attempts to parse both ast.Number and ast.String, returning false on
+// failure. As a low-level helper, the stringCoercion condition is decided by the
+// caller (isNumericType, etc.).
 func toDecimal(v ast.Value) (udecimal.Decimal, bool) {
 	switch val := v.(type) {
 	case ast.Number:
@@ -255,9 +265,10 @@ func toDecimal(v ast.Value) (udecimal.Decimal, bool) {
 	}
 }
 
-// isNumericType은 값이 숫자 모드에서 처리되어야 하는지 판별합니다.
-// ast.Number는 항상 true (파싱 실패해도 숫자 타입).
-// ast.String은 stringCoercion이 활성화되고 숫자로 파싱 가능한 경우에만 true.
+// isNumericType reports whether a value should be handled in numeric mode.
+// ast.Number is always true (it is a numeric type even if parsing fails).
+// ast.String is true only when stringCoercion is enabled and it parses as a
+// number.
 func isNumericType(v ast.Value) bool {
 	switch v.(type) {
 	case ast.Number:
@@ -273,10 +284,10 @@ func isNumericType(v ast.Value) bool {
 	}
 }
 
-// operandToDecimal은 연산자 피연산자를 udecimal.Decimal로 변환합니다.
-// ast.Number의 파싱 에러(예: 정밀도를 벗어나는 "1e-25")는 원래 에러를 그대로
-// 반환하여 eval_builtin_error가 되도록 합니다.
-// ast.String은 stringCoercion이 활성화된 경우에만 변환을 시도합니다.
+// operandToDecimal converts an operator operand into a udecimal.Decimal.
+// A parse error on an ast.Number (e.g. the out-of-precision "1e-25") is returned
+// as-is so that it becomes an eval_builtin_error.
+// An ast.String is converted only when stringCoercion is enabled.
 func operandToDecimal(v ast.Value, pos int) (udecimal.Decimal, error) {
 	switch val := v.(type) {
 	case ast.Number:
@@ -299,9 +310,9 @@ func operandToDecimal(v ast.Value, pos int) (udecimal.Decimal, error) {
 	}
 }
 
-// elementToDecimal은 배열/셋 요소를 udecimal.Decimal로 변환합니다.
-// ast.Number의 파싱 에러는 원래 에러를 그대로 반환합니다.
-// ast.String은 stringCoercion이 활성화된 경우에만 변환을 시도합니다.
+// elementToDecimal converts an array/set element into a udecimal.Decimal.
+// A parse error on an ast.Number is returned as-is.
+// An ast.String is converted only when stringCoercion is enabled.
 func elementToDecimal(container ast.Value, elem *ast.Term) (udecimal.Decimal, error) {
 	switch val := elem.Value.(type) {
 	case ast.Number:
@@ -324,8 +335,8 @@ func elementToDecimal(container ast.Value, elem *ast.Term) (udecimal.Decimal, er
 	}
 }
 
-// parseOperands는 두 피연산자를 udecimal.Decimal로 파싱합니다.
-// stringCoercion 활성화 시, 숫자 형식 문자열도 자동 변환됩니다.
+// parseOperands parses two operands into udecimal.Decimal values.
+// When stringCoercion is enabled, numeric-format strings are auto-converted.
 func parseOperands(operands []*ast.Term) (udecimal.Decimal, udecimal.Decimal, error) {
 	d1, err := operandToDecimal(operands[0].Value, 1)
 	if err != nil {
@@ -338,17 +349,17 @@ func parseOperands(operands []*ast.Term) (udecimal.Decimal, udecimal.Decimal, er
 	return d1, d2, nil
 }
 
-// numberResult는 udecimal 결과를 ast.Term으로 변환
+// numberResult converts a udecimal result into an ast.Term.
 func numberResult(d udecimal.Decimal, iter func(*ast.Term) error) error {
 	return iter(ast.NumberTerm(json.Number(d.String())))
 }
 
-// boolResult는 bool 결과를 ast.Term으로 변환
+// boolResult converts a bool result into an ast.Term.
 func boolResult(b bool, iter func(*ast.Term) error) error {
 	return iter(ast.BooleanTerm(b))
 }
 
-// === 산술 연산 ===
+// === Arithmetic operations ===
 
 func precisionPlus(_ topdown.BuiltinContext, operands []*ast.Term, iter func(*ast.Term) error) error {
 	d1, d2, err := parseOperands(operands)
@@ -359,13 +370,15 @@ func precisionPlus(_ topdown.BuiltinContext, operands []*ast.Term, iter func(*as
 }
 
 func precisionMinus(_ topdown.BuiltinContext, operands []*ast.Term, iter func(*ast.Term) error) error {
-	// minus는 숫자 뿐만 아니라 set에도 사용되므로, 숫자가 아닌 경우 원래 동작으로 폴백
-	// stringCoercion 활성화 시, 숫자 형식 문자열도 숫자로 취급
+	// minus is used for sets as well as numbers, so fall back to the original
+	// behavior when the operands are not numeric.
+	// When stringCoercion is enabled, numeric-format strings are treated as numbers.
 	numLike1 := isNumericType(operands[0].Value)
 	numLike2 := isNumericType(operands[1].Value)
 
 	if numLike1 && numLike2 {
-		// operandToDecimal로 파싱하여 ast.Number의 파싱 에러(예: 정밀도 초과 "1e-25") 보존
+		// Parse via operandToDecimal to preserve ast.Number parse errors (e.g. the
+		// out-of-precision "1e-25").
 		d1, err := operandToDecimal(operands[0].Value, 1)
 		if err != nil {
 			return err
@@ -377,20 +390,20 @@ func precisionMinus(_ topdown.BuiltinContext, operands []*ast.Term, iter func(*a
 		return numberResult(d1.Sub(d2), iter)
 	}
 
-	// set 연산의 경우 원래 동작
+	// Original behavior for set operations.
 	s1, ok3 := operands[0].Value.(ast.Set)
 	s2, ok4 := operands[1].Value.(ast.Set)
 	if ok3 && ok4 {
 		return iter(ast.NewTerm(s1.Diff(s2)))
 	}
 
-	// 타입 불일치 에러: lhs 타입에 맞는 기대 타입을 표시
+	// Type mismatch error: report the expected type based on the lhs type.
 	if numLike1 {
-		// lhs가 숫자인데 rhs가 숫자가 아님
+		// lhs is a number but rhs is not.
 		return builtins.NewOperandTypeErr(2, operands[1].Value, "number")
 	}
 	if ok3 {
-		// lhs가 set인데 rhs가 set이 아님
+		// lhs is a set but rhs is not.
 		return builtins.NewOperandTypeErr(2, operands[1].Value, "set")
 	}
 	return builtins.NewOperandTypeErr(1, operands[0].Value, "number", "set")
@@ -412,7 +425,8 @@ func precisionDivide(_ topdown.BuiltinContext, operands []*ast.Term, iter func(*
 	result, err := d1.Div(d2)
 	if err != nil {
 		if errors.Is(err, udecimal.ErrDivideByZero) {
-			// 표준 OPA와 동일하게 plain error를 반환하여 eval_builtin_error 코드로 처리
+			// Return a plain error like standard OPA so it is handled with the
+			// eval_builtin_error code
 			// (OPA v1.11.0 topdown/arithmetic.go: errors.New("divide by zero")).
 			return errors.New("divide by zero")
 		}
@@ -421,7 +435,7 @@ func precisionDivide(_ topdown.BuiltinContext, operands []*ast.Term, iter func(*
 	return numberResult(result, iter)
 }
 
-// === 비교 연산 ===
+// === Comparison operations ===
 
 func precisionGT(_ topdown.BuiltinContext, operands []*ast.Term, iter func(*ast.Term) error) error {
 	d1, d2, err := parseOperands(operands)
@@ -456,7 +470,7 @@ func precisionLTE(_ topdown.BuiltinContext, operands []*ast.Term, iter func(*ast
 }
 
 func precisionEqual(_ topdown.BuiltinContext, operands []*ast.Term, iter func(*ast.Term) error) error {
-	// equal은 숫자 외에도 다양한 타입에 사용되므로, 숫자인 경우만 정밀 비교
+	// equal is used for many types besides numbers, so use precise comparison only when both are numbers.
 	n1, ok1 := operands[0].Value.(ast.Number)
 	n2, ok2 := operands[1].Value.(ast.Number)
 
@@ -472,7 +486,7 @@ func precisionEqual(_ topdown.BuiltinContext, operands []*ast.Term, iter func(*a
 		return boolResult(d1.Cmp(d2) == 0, iter)
 	}
 
-	// 숫자가 아닌 경우 기본 동등 비교
+	// Default equality comparison for non-numbers.
 	return boolResult(operands[0].Value.Compare(operands[1].Value) == 0, iter)
 }
 
@@ -492,11 +506,11 @@ func precisionNotEqual(_ topdown.BuiltinContext, operands []*ast.Term, iter func
 		return boolResult(d1.Cmp(d2) != 0, iter)
 	}
 
-	// 숫자가 아닌 경우 기본 비교
+	// Default comparison for non-numbers.
 	return boolResult(operands[0].Value.Compare(operands[1].Value) != 0, iter)
 }
 
-// === 나머지 연산 ===
+// === Remainder operation ===
 
 func precisionRem(_ topdown.BuiltinContext, operands []*ast.Term, iter func(*ast.Term) error) error {
 	d1, d2, err := parseOperands(operands)
@@ -504,7 +518,8 @@ func precisionRem(_ topdown.BuiltinContext, operands []*ast.Term, iter func(*ast
 		return err
 	}
 	if d2.IsZero() {
-		// 표준 OPA와 동일하게 plain error를 반환하여 eval_builtin_error 코드로 처리
+		// Return a plain error like standard OPA so it is handled with the
+		// eval_builtin_error code
 		// (OPA v1.11.0 topdown/arithmetic.go: errors.New("modulo by zero")).
 		return errors.New("modulo by zero")
 	}
@@ -515,7 +530,7 @@ func precisionRem(_ topdown.BuiltinContext, operands []*ast.Term, iter func(*ast
 	return numberResult(result, iter)
 }
 
-// === 단항 연산 ===
+// === Unary operations ===
 
 func parseUnaryOperand(operands []*ast.Term) (udecimal.Decimal, error) {
 	return operandToDecimal(operands[0].Value, 1)
@@ -534,7 +549,7 @@ func precisionRound(_ topdown.BuiltinContext, operands []*ast.Term, iter func(*a
 	if err != nil {
 		return err
 	}
-	// Round half away from zero (OPA 기본 동작과 동일)
+	// Round half away from zero (same as OPA's default behavior).
 	return numberResult(d.RoundHAZ(0), iter)
 }
 
@@ -554,7 +569,7 @@ func precisionFloor(_ topdown.BuiltinContext, operands []*ast.Term, iter func(*a
 	return numberResult(d.Floor(), iter)
 }
 
-// === 집계 연산 ===
+// === Aggregate operations ===
 
 func precisionSum(_ topdown.BuiltinContext, operands []*ast.Term, iter func(*ast.Term) error) error {
 	sum := udecimal.Zero
@@ -672,7 +687,7 @@ func precisionMax(_ topdown.BuiltinContext, operands []*ast.Term, iter func(*ast
 			a.Foreach(fn)
 		})
 		if !useNumeric {
-			// 숫자가 아닌 요소가 있으면 기본 비교 사용
+			// Use the default comparison when a non-numeric element is present.
 			max := a.Elem(0).Value
 			a.Foreach(func(x *ast.Term) {
 				if ast.Compare(max, x.Value) < 0 {
@@ -681,7 +696,7 @@ func precisionMax(_ topdown.BuiltinContext, operands []*ast.Term, iter func(*ast
 			})
 			return iter(ast.NewTerm(max))
 		}
-		// 모두 숫자인 경우 정밀 비교
+		// Precise comparison when all elements are numeric.
 		var maxVal udecimal.Decimal
 		var maxTerm *ast.Term
 		var numericErr error
@@ -713,7 +728,7 @@ func precisionMax(_ topdown.BuiltinContext, operands []*ast.Term, iter func(*ast
 			a.Foreach(fn)
 		})
 		if !useNumeric {
-			// 숫자가 아닌 요소가 있으면 기본 비교 사용
+			// Use the default comparison when a non-numeric element is present.
 			var max ast.Value
 			a.Foreach(func(x *ast.Term) {
 				if max == nil || ast.Compare(max, x.Value) < 0 {
@@ -722,7 +737,7 @@ func precisionMax(_ topdown.BuiltinContext, operands []*ast.Term, iter func(*ast
 			})
 			return iter(ast.NewTerm(max))
 		}
-		// 모두 숫자인 경우 정밀 비교
+		// Precise comparison when all elements are numeric.
 		var maxVal udecimal.Decimal
 		var maxTerm *ast.Term
 		var numericErr error
@@ -761,7 +776,7 @@ func precisionMin(_ topdown.BuiltinContext, operands []*ast.Term, iter func(*ast
 			a.Foreach(fn)
 		})
 		if !useNumeric {
-			// 숫자가 아닌 요소가 있으면 기본 비교 사용
+			// Use the default comparison when a non-numeric element is present.
 			min := a.Elem(0).Value
 			a.Foreach(func(x *ast.Term) {
 				if ast.Compare(min, x.Value) > 0 {
@@ -770,7 +785,7 @@ func precisionMin(_ topdown.BuiltinContext, operands []*ast.Term, iter func(*ast
 			})
 			return iter(ast.NewTerm(min))
 		}
-		// 모두 숫자인 경우 정밀 비교
+		// Precise comparison when all elements are numeric.
 		var minVal udecimal.Decimal
 		var minTerm *ast.Term
 		var numericErr error
@@ -802,7 +817,7 @@ func precisionMin(_ topdown.BuiltinContext, operands []*ast.Term, iter func(*ast
 			a.Foreach(fn)
 		})
 		if !useNumeric {
-			// 숫자가 아닌 요소가 있으면 기본 비교 사용
+			// Use the default comparison when a non-numeric element is present.
 			var min ast.Value
 			a.Foreach(func(x *ast.Term) {
 				if min == nil || ast.Compare(min, x.Value) > 0 {
@@ -811,7 +826,7 @@ func precisionMin(_ topdown.BuiltinContext, operands []*ast.Term, iter func(*ast
 			})
 			return iter(ast.NewTerm(min))
 		}
-		// 모두 숫자인 경우 정밀 비교
+		// Precise comparison when all elements are numeric.
 		var minVal udecimal.Decimal
 		var minTerm *ast.Term
 		var numericErr error

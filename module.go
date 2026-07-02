@@ -16,6 +16,10 @@ type ModuleOption = module.ModuleOption
 // additional imports. If the module includes "import data.regobrick.default_false",
 // it applies the default_false transform. METADATA annotations are preserved.
 //
+// Any "data.regobrick.*" marker import is stripped from the returned module: it
+// only triggers transforms and would otherwise be an unused import. This is
+// observable to callers using rego.Strict(true), which rejects unused imports.
+//
 // ParseModule never panics; it returns an error for parse failures, invalid
 // injected import paths, import name conflicts, or unknown regobrick features.
 func ParseModule(filename, src string, imports []string) (*ast.Module, error) {

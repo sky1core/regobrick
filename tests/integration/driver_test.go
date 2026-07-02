@@ -20,19 +20,20 @@ import (
 )
 
 // =============================================================================
-// 드라이버 무결성 검증 테스트 (Driver Integrity Test)
+// Driver Integrity Test
 // =============================================================================
 //
-// 목적: DECIMAL 컬럼의 정밀도가 DB ↔ Go 전체 경로에서 손실되지 않는지 검증
+// Purpose: Verify that DECIMAL column precision is not lost along the entire
+// DB <-> Go path.
 //
-// 검증 항목:
-//   1. 드라이버 타입: DECIMAL을 float64가 아닌 string/[]byte로 반환하는지
-//   2. json.Number 읽기: json.Number로 직접 스캔 시 정밀도 보존
-//   3. json.Number 쓰기: json.Number를 db.Exec에 전달 시 정밀도 보존 (암묵적 string 변환)
-//   4. regobrick.Number: Number.Scan/Value 경유 시 정밀도 보존
-//   5. AllTypes: DECIMAL + 정수 타입(BIGINT, INTEGER) 복합 스캔
+// Verification items:
+//   1. Driver type: whether DECIMAL is returned as string/[]byte rather than float64
+//   2. json.Number read: precision preserved when scanning directly into json.Number
+//   3. json.Number write: precision preserved when passing json.Number to db.Exec (implicit string conversion)
+//   4. regobrick.Number: precision preserved when going through Number.Scan/Value
+//   5. AllTypes: composite scan of DECIMAL + integer types (BIGINT, INTEGER)
 //
-// 테스트 실행:
+// Running the tests:
 //   cd tests/integration && go test -tags=integration -v -run TestDriver
 //
 // =============================================================================
@@ -40,12 +41,12 @@ import (
 const sentinelDecimal = "123456789012345678901234567890123456.78"
 const testInteger = int64(9223372036854775807)
 
-// float64 정밀도 테스트용 값
-const testFloatInput = "123.45678901234567890"  // 입력값 (정밀도 초과)
-const testFloatExpected = "123.45678901234568" // 기대값 (float64 변환 결과)
+// Values for float64 precision testing
+const testFloatInput = "123.45678901234567890" // input value (exceeds precision)
+const testFloatExpected = "123.45678901234568" // expected value (float64 conversion result)
 
 // =============================================================================
-// DB 설정 헬퍼
+// DB setup helpers
 // =============================================================================
 
 type dbSetup struct {
@@ -136,7 +137,7 @@ func openDB(t *testing.T, setup *dbSetup) *sql.DB {
 		t.Fatalf("failed to open db: %v", err)
 	}
 
-	// MySQL 시작 대기
+	// Wait for MySQL to start
 	if setup.driverName == "mysql" {
 		for i := 0; i < 30; i++ {
 			if err := db.Ping(); err == nil {
@@ -150,11 +151,11 @@ func openDB(t *testing.T, setup *dbSetup) *sql.DB {
 }
 
 // =============================================================================
-// 검증 함수
+// Verification functions
 // =============================================================================
 
-// verifyDriverType DECIMAL 컬럼에서 드라이버가 반환하는 Go 타입 검증.
-// string/[]byte면 정밀도 보존, float64면 정밀도 손실.
+// verifyDriverType verifies the Go type returned by the driver for a DECIMAL column.
+// string/[]byte preserves precision, float64 loses precision.
 func verifyDriverType(t *testing.T, db *sql.DB, query string) {
 	var val interface{}
 	if err := db.QueryRow(query).Scan(&val); err != nil {
@@ -179,12 +180,12 @@ func verifyDriverType(t *testing.T, db *sql.DB, query string) {
 	}
 }
 
-// Stringer String() 메서드를 가진 타입
+// Stringer is a type that has a String() method
 type Stringer interface {
 	String() string
 }
 
-// verifyScan 제네릭 스캔 검증. T는 json.Number 또는 regobrick.Number
+// verifyScan is a generic scan verification. T is json.Number or regobrick.Number
 func verifyScan[T Stringer](t *testing.T, db *sql.DB, query, want, typeName string) {
 	var v T
 	if err := db.QueryRow(query).Scan(&v); err != nil {
@@ -197,23 +198,23 @@ func verifyScan[T Stringer](t *testing.T, db *sql.DB, query, want, typeName stri
 	t.Logf("PASS: %s scan: %s", typeName, v.String())
 }
 
-// verifyNumberValue regobrick.Number를 db.Exec에 직접 전달하여 쓰기 검증 (driver.Valuer 경로)
-// createTableSQL: 테이블 생성 SQL (예: "CREATE TABLE test_value (val DECIMAL(50, 2))")
-// placeholder: 파라미터 플레이스홀더 (PostgreSQL: "$1", MySQL/SQLite: "?")
+// verifyNumberValue verifies writing by passing regobrick.Number directly to db.Exec (driver.Valuer path)
+// createTableSQL: table creation SQL (e.g. "CREATE TABLE test_value (val DECIMAL(50, 2))")
+// placeholder: parameter placeholder (PostgreSQL: "$1", MySQL/SQLite: "?")
 func verifyNumberValue(t *testing.T, db *sql.DB, createTableSQL, placeholder string) {
 	_, err := db.Exec(createTableSQL)
 	if err != nil {
 		t.Fatalf("failed to create table: %v", err)
 	}
 
-	// regobrick.Number를 직접 전달 → driver.Valuer.Value() 호출
+	// Pass regobrick.Number directly -> driver.Valuer.Value() is called
 	n := regobrick.Number(sentinelDecimal)
 	_, err = db.Exec("INSERT INTO test_value (val) VALUES ("+placeholder+")", n)
 	if err != nil {
 		t.Fatalf("failed to insert via Number: %v", err)
 	}
 
-	// raw string으로 읽어서 확인
+	// Read back as a raw string to verify
 	var raw string
 	if err := db.QueryRow("SELECT val FROM test_value").Scan(&raw); err != nil {
 		t.Fatalf("failed to scan raw: %v", err)
@@ -225,23 +226,23 @@ func verifyNumberValue(t *testing.T, db *sql.DB, createTableSQL, placeholder str
 	t.Logf("PASS: Number.Value preserved precision")
 }
 
-// verifyJsonNumberValue json.Number를 db.Exec에 직접 전달하여 쓰기 검증 (암묵적 string 변환 경로)
-// json.Number는 type Number string이므로 driver.Valuer가 아닌
-// DefaultParameterConverter.ConvertValue의 reflect.String 케이스로 처리됨.
+// verifyJsonNumberValue verifies writing by passing json.Number directly to db.Exec (implicit string conversion path)
+// Because json.Number is `type Number string`, it is not handled as a driver.Valuer but
+// through the reflect.String case of DefaultParameterConverter.ConvertValue.
 func verifyJsonNumberValue(t *testing.T, db *sql.DB, createTableSQL, placeholder string) {
 	_, err := db.Exec(createTableSQL)
 	if err != nil {
 		t.Fatalf("failed to create table: %v", err)
 	}
 
-	// json.Number를 직접 전달 → DefaultParameterConverter가 string으로 변환
+	// Pass json.Number directly -> DefaultParameterConverter converts it to string
 	n := json.Number(sentinelDecimal)
 	_, err = db.Exec("INSERT INTO test_jn_value (val) VALUES ("+placeholder+")", n)
 	if err != nil {
 		t.Fatalf("failed to insert via json.Number: %v", err)
 	}
 
-	// raw string으로 읽어서 확인
+	// Read back as a raw string to verify
 	var raw string
 	if err := db.QueryRow("SELECT val FROM test_jn_value").Scan(&raw); err != nil {
 		t.Fatalf("failed to scan raw: %v", err)
@@ -254,7 +255,7 @@ func verifyJsonNumberValue(t *testing.T, db *sql.DB, createTableSQL, placeholder
 }
 
 // =============================================================================
-// PostgreSQL pgx 테스트
+// PostgreSQL pgx tests
 // =============================================================================
 
 func TestDriverIntegrity_Postgres_pgx(t *testing.T) {
@@ -321,12 +322,12 @@ func TestDriverIntegrity_Postgres_pgx_AllTypes(t *testing.T) {
 		t.Fatalf("failed to insert: %v", err)
 	}
 
-	// 드라이버 타입 검증
+	// Verify driver type
 	t.Run("DecimalDriverType", func(t *testing.T) {
 		verifyDriverType(t, db, "SELECT dec_val FROM all_types")
 	})
 
-	// regobrick.Number로 모든 타입 스캔 (json.Number는 string만 가능하므로 제외)
+	// Scan all types with regobrick.Number (json.Number is excluded since it only supports string)
 	t.Run("Number/DECIMAL", func(t *testing.T) {
 		verifyScan[regobrick.Number](t, db, "SELECT dec_val FROM all_types", sentinelDecimal, "regobrick.Number")
 	})
@@ -336,7 +337,7 @@ func TestDriverIntegrity_Postgres_pgx_AllTypes(t *testing.T) {
 }
 
 // =============================================================================
-// PostgreSQL lib/pq 테스트
+// PostgreSQL lib/pq tests
 // =============================================================================
 
 func TestDriverIntegrity_Postgres_pq(t *testing.T) {
@@ -380,7 +381,7 @@ func TestDriverIntegrity_Postgres_pq(t *testing.T) {
 }
 
 // =============================================================================
-// MySQL 테스트
+// MySQL tests
 // =============================================================================
 
 func TestDriverIntegrity_MySQL(t *testing.T) {
@@ -447,12 +448,12 @@ func TestDriverIntegrity_MySQL_AllTypes(t *testing.T) {
 		t.Fatalf("failed to insert: %v", err)
 	}
 
-	// 드라이버 타입 검증
+	// Verify driver type
 	t.Run("DecimalDriverType", func(t *testing.T) {
 		verifyDriverType(t, db, "SELECT dec_val FROM all_types")
 	})
 
-	// regobrick.Number로 모든 타입 스캔 (json.Number는 string만 가능하므로 제외)
+	// Scan all types with regobrick.Number (json.Number is excluded since it only supports string)
 	t.Run("Number/DECIMAL", func(t *testing.T) {
 		verifyScan[regobrick.Number](t, db, "SELECT dec_val FROM all_types", sentinelDecimal, "regobrick.Number")
 	})
@@ -462,7 +463,7 @@ func TestDriverIntegrity_MySQL_AllTypes(t *testing.T) {
 }
 
 // =============================================================================
-// SQLite 테스트
+// SQLite tests
 // =============================================================================
 
 func TestDriverIntegrity_SQLite(t *testing.T) {
@@ -472,7 +473,7 @@ func TestDriverIntegrity_SQLite(t *testing.T) {
 	db := openDB(t, setup)
 	defer db.Close()
 
-	// SQLite는 DECIMAL 타입이 없으므로 TEXT 사용
+	// SQLite has no DECIMAL type, so use TEXT
 	_, err := db.Exec("CREATE TABLE test_decimal (val TEXT)")
 	if err != nil {
 		t.Fatalf("failed to create table: %v", err)
@@ -526,12 +527,12 @@ func TestDriverIntegrity_SQLite_AllTypes(t *testing.T) {
 		t.Fatalf("failed to insert: %v", err)
 	}
 
-	// 드라이버 타입 검증
+	// Verify driver type
 	t.Run("TextDriverType", func(t *testing.T) {
 		verifyDriverType(t, db, "SELECT text_val FROM all_types")
 	})
 
-	// regobrick.Number로 모든 타입 스캔 (json.Number는 string만 가능하므로 제외)
+	// Scan all types with regobrick.Number (json.Number is excluded since it only supports string)
 	t.Run("Number/TEXT", func(t *testing.T) {
 		verifyScan[regobrick.Number](t, db, "SELECT text_val FROM all_types", sentinelDecimal, "regobrick.Number")
 	})
@@ -542,7 +543,7 @@ func TestDriverIntegrity_SQLite_AllTypes(t *testing.T) {
 		verifyScan[regobrick.Number](t, db, "SELECT real_val FROM all_types", "123.456", "regobrick.Number")
 	})
 	t.Run("Number/REAL_PrecisionLoss", func(t *testing.T) {
-		// 정밀도 초과 값이 float64 변환 결과와 일치하는지 검증
+		// Verify that a value exceeding precision matches the float64 conversion result
 		verifyScan[regobrick.Number](t, db, "SELECT real_precision_val FROM all_types", testFloatExpected, "regobrick.Number")
 	})
 }

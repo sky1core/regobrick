@@ -33,8 +33,15 @@ type builtinRegisterConfig struct {
 	configurators []func(*rego.Function)
 }
 
+// BuiltinRegisterOption configures how a builtin is registered by the
+// RegisterBuiltinX / RegisterBuiltinX_ functions. Pass any number of these
+// options to attach categories or customize the underlying rego.Function.
 type BuiltinRegisterOption func(*builtinRegisterConfig)
 
+// WithCategories assigns one or more categories to the registered builtin.
+// These categories are stored per builtin name and consulted by
+// FilterCapabilities: a filtered capabilities set keeps a custom builtin when
+// one of its categories is in the allowed category list.
 func WithCategories(cats ...string) BuiltinRegisterOption {
 	return func(cfg *builtinRegisterConfig) {
 		cfg.categories = cats

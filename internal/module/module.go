@@ -7,10 +7,16 @@ import (
 	"github.com/open-policy-agent/opa/v1/rego"
 )
 
+// ModuleOption describes a single Rego module to add via Modules. It is exposed
+// publicly as regobrick.ModuleOption.
 type ModuleOption struct {
+	// Filename is the module's name, used in error messages and AST metadata.
 	Filename string
-	Source   string
-	Imports  []string
+	// Source is the raw Rego source code of the module.
+	Source string
+	// Imports lists additional import paths (e.g. "data.foo.bar") to inject into
+	// the module.
+	Imports []string
 }
 
 // Module returns a rego.Rego option that adds a single Rego module built from

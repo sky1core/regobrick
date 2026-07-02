@@ -200,10 +200,11 @@ func addDefaultFalse(mod *ast.Module) {
 			continue
 		}
 
-		// Boolean rule 판별:
-		// - Head.Key가 nil (partial rule이 아님)
-		// - Head.Value가 nil이거나 Boolean 타입
-		// Complete rule (x := 1)은 Head.Value가 Number/String 등이므로 제외
+		// Detect a boolean rule:
+		// - Head.Key is nil (not a partial rule)
+		// - Head.Value is nil or of Boolean type
+		// Complete rules (x := 1) are excluded because their Head.Value is a
+		// Number/String, etc.
 		isBooleanRule := false
 		if r.Head.Key == nil {
 			if r.Head.Value == nil {

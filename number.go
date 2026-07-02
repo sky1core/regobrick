@@ -8,44 +8,50 @@ import (
 	"strconv"
 )
 
-// Number Rego에 전달하는 숫자 표현.
-// JSON 직렬화 시 숫자 리터럴로 출력되고, DB의 숫자 컬럼과 직접 연동된다.
+// Number is a numeric representation passed to Rego.
+// It is emitted as a numeric literal during JSON serialization and integrates
+// directly with numeric DB columns.
 //
-// 계약:
-//   - 지수표기(e/E)는 지원. UseDecimalArithmetic()의 연산에서 평범한 십진
-//     표기로 전개된 뒤 파싱되므로(예: "1e-8"→"0.00000001") 표준 OPA와 동일하게
-//     동작한다. 단, 전개 결과가 udecimal 정밀도(소수점 이하 19자리)를 벗어나면
-//     (예: "1e-25") 여전히 파싱 에러로 평가가 실패한다.
-//   - 입력값의 유효성은 제공자 책임. regobrick은 연산 시점에만 검증한다.
-//   - DB Scan 시 string, []byte, int64, float64 모두 허용.
-//   - DECIMAL 컬럼의 정밀도 보장은 드라이버 책임 (string/[]byte 반환 필요).
-//     드라이버 무결성 테스트로 사전 검증 권장.
+// Contract:
+//   - Exponent notation (e/E) is supported. In UseDecimalArithmetic() operations
+//     it is expanded to plain decimal notation before parsing (e.g. "1e-8" →
+//     "0.00000001"), so it behaves the same as standard OPA. However, if the
+//     expanded result exceeds udecimal's precision (19 decimal places, e.g.
+//     "1e-25"), evaluation still fails with a parse error.
+//   - Input validity is the provider's responsibility; regobrick validates only
+//     at operation time.
+//   - DB Scan accepts string, []byte, int64, and float64.
+//   - Preserving the precision of DECIMAL columns is the driver's responsibility
+//     (it must return string/[]byte). Verifying this up front with a driver
+//     integrity test is recommended.
 //
-// NULL/빈값 처리 (json.Number 및 decimal 라이브러리 관례):
-//   - JSON: null → 빈 문자열, 빈 문자열 → 0으로 출력 (Go zero value 관례)
-//   - DB: NULL/빈값 → 에러 (decimal 라이브러리 관례)
+// NULL/empty handling (json.Number and decimal library conventions):
+//   - JSON: null → empty string, empty string → emitted as 0 (Go zero-value
+//     convention)
+//   - DB: NULL/empty → error (decimal library convention)
 //
-// 예시:
+// Example:
 //
 //	input := map[string]any{
 //	    "price": regobrick.Number("123.45"),
 //	}
 type Number json.Number
 
-// String 문자열 표현 반환.
+// String returns the string representation.
 func (n Number) String() string {
 	return string(n)
 }
 
-// MarshalJSON JSON 숫자 리터럴로 출력 (따옴표 없이).
-// json.Number는 빈 문자열("")을 0으로 출력한다 (Go 관례: zero value는 유효).
+// MarshalJSON emits a JSON numeric literal (without quotes).
+// json.Number emits an empty string ("") as 0 (Go convention: the zero value is
+// valid).
 func (n Number) MarshalJSON() ([]byte, error) {
 	return json.Marshal(json.Number(n))
 }
 
-// UnmarshalJSON JSON 숫자를 파싱.
-// json.Number는 null을 빈 문자열("")로 처리한다.
-// 빈 문자열은 MarshalJSON에서 0으로 출력된다.
+// UnmarshalJSON parses a JSON number.
+// json.Number treats null as an empty string ("").
+// An empty string is emitted as 0 by MarshalJSON.
 func (n *Number) UnmarshalJSON(b []byte) error {
 	var num json.Number
 	if err := json.Unmarshal(b, &num); err != nil {
@@ -55,8 +61,9 @@ func (n *Number) UnmarshalJSON(b []byte) error {
 	return nil
 }
 
-// Scan sql.Scanner 구현. DB에서 숫자 컬럼 읽기.
-// NULL/빈값은 에러 반환 (udecimal, shopspring 등 decimal 라이브러리 관례).
+// Scan implements sql.Scanner, reading a numeric column from the DB.
+// NULL/empty values return an error (a convention of decimal libraries such as
+// udecimal and shopspring).
 func (n *Number) Scan(src any) error {
 	if src == nil {
 		return fmt.Errorf("Number.Scan: NULL not supported")
@@ -88,8 +95,8 @@ func (n *Number) Scan(src any) error {
 	return nil
 }
 
-// Value driver.Valuer 구현. DB에 DECIMAL/NUMERIC 컬럼 쓰기.
-// 빈값은 에러 반환 (decimal 라이브러리 관례).
+// Value implements driver.Valuer, writing to a DECIMAL/NUMERIC column in the DB.
+// An empty value returns an error (decimal library convention).
 func (n Number) Value() (driver.Value, error) {
 	if n == "" {
 		return nil, fmt.Errorf("Number.Value: empty value not supported")

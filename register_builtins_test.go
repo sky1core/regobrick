@@ -12,6 +12,7 @@ import (
 
 	"github.com/open-policy-agent/opa/v1/ast"
 	"github.com/open-policy-agent/opa/v1/rego"
+	"github.com/open-policy-agent/opa/v1/topdown"
 )
 
 // toFloat64 converts json.Number or float64 to float64.
@@ -31,7 +32,7 @@ func toFloat64(v interface{}) (float64, bool) {
 	}
 }
 
-// 테스트용 builtin 함수들
+// builtin functions for testing
 var testCallCount int64
 var mutableCategory = []string{"mutable_test_category"}
 
@@ -74,9 +75,9 @@ func requireBuiltinSingleValue(t *testing.T, rs rego.ResultSet) interface{} {
 }
 
 func init() {
-	// 테스트용 builtin 등록
+	// register builtins for testing
 
-	// 1인자 string → int 반환
+	// 1 arg string → returns int
 	RegisterBuiltin1[string, int](
 		"test_strlen",
 		func(bctx rego.BuiltinContext, s string) (int, error) {
@@ -86,7 +87,7 @@ func init() {
 		WithCategories("test"),
 	)
 
-	// 2인자 int, int → int 반환
+	// 2 args int, int → returns int
 	RegisterBuiltin2[int64, int64, int64](
 		"test_add",
 		func(bctx rego.BuiltinContext, a, b int64) (int64, error) {
@@ -95,7 +96,7 @@ func init() {
 		WithCategories("test"),
 	)
 
-	// float64 반환
+	// returns float64
 	RegisterBuiltin1[float64, float64](
 		"test_double",
 		func(bctx rego.BuiltinContext, x float64) (float64, error) {
@@ -104,7 +105,7 @@ func init() {
 		WithCategories("test"),
 	)
 
-	// bool 반환
+	// returns bool
 	RegisterBuiltin1[int64, bool](
 		"test_is_positive",
 		func(bctx rego.BuiltinContext, x int64) (bool, error) {
@@ -113,7 +114,7 @@ func init() {
 		WithCategories("test"),
 	)
 
-	// map 반환
+	// returns map
 	RegisterBuiltin1[string, map[string]any](
 		"test_wrap",
 		func(bctx rego.BuiltinContext, s string) (map[string]any, error) {
@@ -122,7 +123,7 @@ func init() {
 		WithCategories("test"),
 	)
 
-	// slice 반환
+	// returns slice
 	RegisterBuiltin1[int64, []int64](
 		"test_range",
 		func(bctx rego.BuiltinContext, n int64) ([]int64, error) {
@@ -135,7 +136,7 @@ func init() {
 		WithCategories("test"),
 	)
 
-	// Nondeterministic 테스트용
+	// for Nondeterministic testing
 	RegisterBuiltin0[int64](
 		"test_counter",
 		func(bctx rego.BuiltinContext) (int64, error) {
@@ -145,18 +146,18 @@ func init() {
 		WithNondeterministic(),
 	)
 
-	// RegisterBuiltin1_ (에러만 반환, null 리턴) 테스트용
+	// for RegisterBuiltin1_ testing (error only, returns null)
 	RegisterBuiltin1_[string](
 		"test_log",
 		func(bctx rego.BuiltinContext, msg string) error {
-			// 사이드 이펙트만 있고 반환값 없음
+			// side effect only, no return value
 			atomic.AddInt64(&testCallCount, 1)
 			return nil
 		},
 		WithCategories("test"),
 	)
 
-	// RegisterBuiltin1_ 에러 전파 테스트용
+	// for RegisterBuiltin1_ error propagation testing
 	RegisterBuiltin1_[string](
 		"test_fail_if_empty",
 		func(bctx rego.BuiltinContext, msg string) error {
@@ -320,7 +321,7 @@ result := test_wrap("abc")
 	if result["value"] != "abc" {
 		t.Errorf("expected value=abc, got %v", result["value"])
 	}
-	// length는 json.Number로 반환됨
+	// length is returned as json.Number
 	length, ok := toFloat64(result["length"])
 	if !ok {
 		t.Fatalf("expected numeric length, got %T", result["length"])
@@ -359,7 +360,7 @@ result := test_range(3)
 }
 
 func TestWithCategories(t *testing.T) {
-	// FilterCapabilities로 카테고리 필터링 동작 검증
+	// verify category filtering behavior via FilterCapabilities
 	caps := FilterCapabilities(nil, []string{"test"})
 
 	found := false
@@ -375,7 +376,7 @@ func TestWithCategories(t *testing.T) {
 }
 
 func TestWithNondeterministic(t *testing.T) {
-	// Nondeterministic 함수가 여러 번 호출되는지 확인
+	// verify that a Nondeterministic function is called multiple times
 	resetCallCount()
 
 	module := `package test
@@ -398,15 +399,15 @@ result := [r1, r2, r3]
 		t.Fatalf("eval error: %v", err)
 	}
 
-	// Nondeterministic이므로 memoize되면 안 됨 (최소 3번 호출)
-	// OPA가 추가 호출을 할 수 있으므로 >= 3으로 검증
+	// since it is Nondeterministic, it must not be memoized (at least 3 calls)
+	// OPA may make additional calls, so verify with >= 3
 	count := getCallCount()
 	if count < 3 {
 		t.Errorf("expected at least 3 calls (nondeterministic), got %d", count)
 	}
 }
 
-// test_memoized_strlen: Memoize 테스트용 builtin
+// test_memoized_strlen: builtin for Memoize testing
 var memoizedCallCount int64
 
 func init() {
@@ -420,7 +421,7 @@ func init() {
 		WithMemoize(),
 	)
 
-	// ConfigureFunction(nil) 테스트용 - nil은 no-op이어야 함
+	// for ConfigureFunction(nil) testing - nil should be a no-op
 	RegisterBuiltin1[string, int](
 		"test_nil_configurator",
 		func(bctx rego.BuiltinContext, s string) (int, error) {
@@ -429,7 +430,7 @@ func init() {
 		ConfigureFunction(nil),
 	)
 
-	// RegisterBuiltin2_ 테스트용 (2인자, 에러만 반환)
+	// for RegisterBuiltin2_ testing (2 args, error only)
 	RegisterBuiltin2_[string, string](
 		"test_assert_equal",
 		func(bctx rego.BuiltinContext, a, b string) error {
@@ -441,7 +442,7 @@ func init() {
 		WithCategories("test"),
 	)
 
-	// RegisterBuiltin3 테스트용 (3인자, 값 반환)
+	// for RegisterBuiltin3 testing (3 args, value return)
 	RegisterBuiltin3[int64, int64, int64, int64](
 		"test_clamp",
 		func(bctx rego.BuiltinContext, val, min, max int64) (int64, error) {
@@ -456,7 +457,7 @@ func init() {
 		WithCategories("test"),
 	)
 
-	// RegisterBuiltin0_ 테스트용 (0인자, 에러만 반환)
+	// for RegisterBuiltin0_ testing (0 args, error only)
 	RegisterBuiltin0_(
 		"test_always_succeed",
 		func(bctx rego.BuiltinContext) error {
@@ -489,10 +490,52 @@ func init() {
 		},
 		WithCategories("test"),
 	)
+
+	// RegisterBuiltin4 test builtin (4 args, value return): sum of four integers.
+	RegisterBuiltin4[int64, int64, int64, int64, int64](
+		"test_sum4",
+		func(bctx rego.BuiltinContext, a, b, c, d int64) (int64, error) {
+			return a + b + c + d, nil
+		},
+		WithCategories("test"),
+	)
+
+	// RegisterBuiltin5 test builtin (5 args, value return): sum of five integers.
+	RegisterBuiltin5[int64, int64, int64, int64, int64, int64](
+		"test_sum5",
+		func(bctx rego.BuiltinContext, a, b, c, d, e int64) (int64, error) {
+			return a + b + c + d + e, nil
+		},
+		WithCategories("test"),
+	)
+
+	// RegisterBuiltin4_ test builtin (4 args, error only): all four must be equal.
+	RegisterBuiltin4_[string, string, string, string](
+		"test_assert_equal4",
+		func(bctx rego.BuiltinContext, a, b, c, d string) error {
+			if a == b && b == c && c == d {
+				return nil
+			}
+			return fmt.Errorf("not all equal: %q %q %q %q", a, b, c, d)
+		},
+		WithCategories("test"),
+	)
+
+	// RegisterBuiltin5_ test builtin (5 args, error only): all five must be equal.
+	RegisterBuiltin5_[string, string, string, string, string](
+		"test_assert_equal5",
+		func(bctx rego.BuiltinContext, a, b, c, d, e string) error {
+			if a == b && b == c && c == d && d == e {
+				return nil
+			}
+			return fmt.Errorf("not all equal: %q %q %q %q %q", a, b, c, d, e)
+		},
+		WithCategories("test"),
+	)
 }
 
 func TestConfigureFunction_Nil(t *testing.T) {
-	// ConfigureFunction(nil)이 등록된 builtin이 정상 동작하는지 확인
+	// verify that a builtin registered with ConfigureFunction(nil) works correctly
 	module := `package test
 result := test_nil_configurator("hello")
 `
@@ -507,7 +550,7 @@ result := test_nil_configurator("hello")
 }
 
 func TestWithMemoize(t *testing.T) {
-	// Memoize 옵션이 설정된 함수는 같은 인자로 호출 시 1번만 실행됨
+	// a function with the Memoize option runs only once when called with the same arguments
 	atomic.StoreInt64(&memoizedCallCount, 0)
 
 	module := `package test
@@ -530,7 +573,7 @@ result := [r1, r2, r3]
 		t.Fatalf("eval error: %v", err)
 	}
 
-	// Memoize가 설정되어 있으므로 1번만 호출됨
+	// since Memoize is set, it is called only once
 	count := atomic.LoadInt64(&memoizedCallCount)
 	t.Logf("test_memoized_strlen called %d times", count)
 	if count != 1 {
@@ -576,11 +619,11 @@ result := test_memoized_strlen("hello")
 	}
 }
 
-// === RegisterBuiltinX_ (에러만 반환) 테스트 ===
+// === RegisterBuiltinX_ (error only) tests ===
 
 func TestRegisterBuiltin1__SideEffect(t *testing.T) {
-	// RegisterBuiltin1_는 void 함수 (반환값 없음, 사이드 이펙트만)
-	// 값으로 사용할 수 없으므로 조건절에서 호출
+	// RegisterBuiltin1_ is a void function (no return value, side effect only)
+	// it cannot be used as a value, so call it in a condition
 	resetCallCount()
 
 	module := `package test
@@ -607,20 +650,20 @@ result if {
 		t.Fatal("no result")
 	}
 
-	// 규칙이 true로 평가되어야 함
+	// the rule should evaluate to true
 	result := rs[0].Expressions[0].Value.(bool)
 	if !result {
 		t.Error("expected true, got false")
 	}
 
-	// 함수는 호출되어야 함
+	// the function should be called
 	if getCallCount() != 1 {
 		t.Errorf("expected 1 call, got %d", getCallCount())
 	}
 }
 
 func TestRegisterBuiltin1__ErrorPropagation(t *testing.T) {
-	// void 함수가 에러를 반환하면 규칙이 실패해야 함
+	// if a void function returns an error, the rule should fail
 	module := `package test
 default result := false
 result if {
@@ -647,7 +690,7 @@ result if {
 			t.Fatal("no result")
 		}
 
-		// 기본 모드: 에러로 인해 규칙 실패 → false
+		// default mode: the error fails the rule → false
 		result := rs[0].Expressions[0].Value.(bool)
 		if result {
 			t.Error("expected false due to error, but got true")
@@ -665,20 +708,33 @@ result if {
 		}
 
 		_, err = query.Eval(ctx)
-		// Strict 모드: eval error 발생
+		// Strict mode: the builtin error propagates as an eval error.
 		if err == nil {
-			t.Error("expected eval error, but got none")
+			t.Fatal("expected eval error, but got none")
+		}
+
+		// A plain error returned by a custom builtin surfaces as a topdown
+		// BuiltinErr in strict mode, carrying the original message.
+		var topdownErr *topdown.Error
+		if !errors.As(err, &topdownErr) {
+			t.Fatalf("expected topdown.Error, got %T: %v", err, err)
+		}
+		if topdownErr.Code != topdown.BuiltinErr {
+			t.Errorf("expected error code %s, got %s", topdown.BuiltinErr, topdownErr.Code)
+		}
+		if !strings.Contains(err.Error(), "message cannot be empty") {
+			t.Errorf("expected message to contain %q, got: %v", "message cannot be empty", err)
 		}
 	})
 }
 
-// === FilterCapabilities 추가 테스트 ===
+// === Additional FilterCapabilities tests ===
 
 func TestFilterCapabilities_Exclusion(t *testing.T) {
-	// 특정 카테고리로 필터링하면 다른 카테고리는 제외됨
+	// filtering by a specific category excludes other categories
 	caps := FilterCapabilities(nil, []string{"test"})
 
-	// strings 카테고리의 builtin은 제외되어야 함
+	// builtins in the strings category should be excluded
 	for _, b := range caps.Builtins {
 		if b.Name == "sprintf" {
 			t.Error("sprintf (strings category) should be excluded when filtering by 'test' category only")
@@ -687,11 +743,11 @@ func TestFilterCapabilities_Exclusion(t *testing.T) {
 }
 
 func TestFilterCapabilities_CoreInfixPreserved(t *testing.T) {
-	// coreInfixes에 있는 연산자(=, :=, in)는 어떤 필터를 적용해도 보존되어야 함
+	// operators in coreInfixes (=, :=, in) must be preserved regardless of the filter applied
 	caps := FilterCapabilities(nil, []string{"test"})
 
-	// coreInfixes에 해당하는 builtin들의 Infix 확인
-	// "=" → eq, ":=" → assign, "in" → internal.member_2 등
+	// check the Infix of builtins that belong to coreInfixes
+	// "=" → eq, ":=" → assign, "in" → internal.member_2, etc.
 	coreInfixValues := []string{"=", ":=", "in"}
 
 	for _, infix := range coreInfixValues {
@@ -709,11 +765,11 @@ func TestFilterCapabilities_CoreInfixPreserved(t *testing.T) {
 }
 
 func TestFilterCapabilities_ArithmeticNotCore(t *testing.T) {
-	// 산술 연산자는 coreInfixes에 없으므로 카테고리 필터링 시 제외될 수 있음
-	// 이는 의도된 동작임을 문서화하는 테스트
+	// arithmetic operators are not in coreInfixes, so they can be excluded during category filtering
+	// this test documents that this is intended behavior
 	caps := FilterCapabilities(nil, []string{"test"})
 
-	// plus, minus 등은 coreInfixes에 없으므로 제외됨
+	// plus, minus, etc. are not in coreInfixes, so they are excluded
 	for _, b := range caps.Builtins {
 		if b.Name == "plus" || b.Name == "minus" || b.Name == "mul" || b.Name == "div" {
 			t.Errorf("arithmetic operator %q should be excluded when filtering by 'test' category only (not in coreInfixes)", b.Name)
@@ -722,7 +778,7 @@ func TestFilterCapabilities_ArithmeticNotCore(t *testing.T) {
 }
 
 func TestFilterCapabilities_ByName(t *testing.T) {
-	// 이름으로 필터링
+	// filter by name
 	caps := FilterCapabilities([]string{"test_strlen"}, nil)
 
 	found := false
@@ -730,7 +786,7 @@ func TestFilterCapabilities_ByName(t *testing.T) {
 		if b.Name == "test_strlen" {
 			found = true
 		}
-		// test_add는 이름 목록에 없으므로 제외되어야 함
+		// test_add is not in the name list, so it should be excluded
 		if b.Name == "test_add" {
 			t.Error("test_add should be excluded when filtering by name 'test_strlen' only")
 		}
@@ -766,7 +822,7 @@ func TestWithCategories_CopiesSliceInput(t *testing.T) {
 	}
 }
 
-// === 추가 RegisterBuiltinX_ 테스트 ===
+// === Additional RegisterBuiltinX_ tests ===
 
 func TestRegisterBuiltin2__Success(t *testing.T) {
 	module := `package test
@@ -824,7 +880,7 @@ result if {
 		t.Fatal("no result")
 	}
 
-	// 기본 모드에서 에러는 규칙 실패로 이어짐
+	// in default mode, an error leads to rule failure
 	result := rs[0].Expressions[0].Value.(bool)
 	if result {
 		t.Error("expected false (unequal strings cause error), got true")
@@ -874,6 +930,92 @@ func TestRegisterBuiltin3_Clamp(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestRegisterBuiltin4_Sum(t *testing.T) {
+	module := `package test
+result := test_sum4(1, 2, 3, 4)
+`
+	rs := evalBuiltinModule(t, "data.test.result", module)
+	result, ok := toFloat64(requireBuiltinSingleValue(t, rs))
+	if !ok {
+		t.Fatalf("expected numeric result, got %T", requireBuiltinSingleValue(t, rs))
+	}
+	if result != 10 {
+		t.Errorf("expected 10, got %v", result)
+	}
+}
+
+func TestRegisterBuiltin5_Sum(t *testing.T) {
+	module := `package test
+result := test_sum5(1, 2, 3, 4, 5)
+`
+	rs := evalBuiltinModule(t, "data.test.result", module)
+	result, ok := toFloat64(requireBuiltinSingleValue(t, rs))
+	if !ok {
+		t.Fatalf("expected numeric result, got %T", requireBuiltinSingleValue(t, rs))
+	}
+	if result != 15 {
+		t.Errorf("expected 15, got %v", result)
+	}
+}
+
+func TestRegisterBuiltin4__SuccessAndFailure(t *testing.T) {
+	t.Run("success", func(t *testing.T) {
+		module := `package test
+default result := false
+result if {
+	test_assert_equal4("a", "a", "a", "a")
+}
+`
+		rs := evalBuiltinModule(t, "data.test.result", module)
+		if got := requireBuiltinSingleValue(t, rs); got != true {
+			t.Errorf("expected true for all-equal args, got %v", got)
+		}
+	})
+
+	t.Run("failure_default_mode", func(t *testing.T) {
+		// An unequal arg makes the builtin return an error; in default mode the
+		// error fails the rule, so result falls back to the default false.
+		module := `package test
+default result := false
+result if {
+	test_assert_equal4("a", "a", "a", "b")
+}
+`
+		rs := evalBuiltinModule(t, "data.test.result", module)
+		if got := requireBuiltinSingleValue(t, rs); got != false {
+			t.Errorf("expected false when args unequal, got %v", got)
+		}
+	})
+}
+
+func TestRegisterBuiltin5__SuccessAndFailure(t *testing.T) {
+	t.Run("success", func(t *testing.T) {
+		module := `package test
+default result := false
+result if {
+	test_assert_equal5("a", "a", "a", "a", "a")
+}
+`
+		rs := evalBuiltinModule(t, "data.test.result", module)
+		if got := requireBuiltinSingleValue(t, rs); got != true {
+			t.Errorf("expected true for all-equal args, got %v", got)
+		}
+	})
+
+	t.Run("failure_default_mode", func(t *testing.T) {
+		module := `package test
+default result := false
+result if {
+	test_assert_equal5("a", "a", "a", "a", "b")
+}
+`
+		rs := evalBuiltinModule(t, "data.test.result", module)
+		if got := requireBuiltinSingleValue(t, rs); got != false {
+			t.Errorf("expected false when args unequal, got %v", got)
+		}
+	})
 }
 
 func TestRegisterBuiltin0__Success(t *testing.T) {
@@ -927,11 +1069,11 @@ result := test_fixed_time()
 	}
 }
 
-// === 타입 변환 에러 테스트 ===
+// === Type conversion error tests ===
 
 func TestBuiltin_TypeMismatch_CompileTime(t *testing.T) {
-	// OPA는 타입 체크를 컴파일 타임에 수행함
-	// 잘못된 타입은 PrepareForEval에서 에러 발생
+	// OPA performs type checking at compile time
+	// an incorrect type raises an error in PrepareForEval
 	tests := []struct {
 		name   string
 		module string
@@ -956,12 +1098,12 @@ result := test_clamp(true, 0, 10)`,
 				rego.Module("test.rego", tt.module),
 			).PrepareForEval(ctx)
 
-			// 컴파일 타임 타입 에러 발생
+			// a compile-time type error occurs
 			if err == nil {
 				t.Fatal("expected compile-time type error, got none")
 			}
 
-			// 1차: typed error 확인 (ast.Errors)
+			// first: check for a typed error (ast.Errors)
 			var astErrs ast.Errors
 			if errors.As(err, &astErrs) {
 				hasTypeError := false
@@ -975,7 +1117,7 @@ result := test_clamp(true, 0, 10)`,
 					t.Errorf("expected ast.TypeErr in errors, got: %v", astErrs)
 				}
 			} else {
-				// 2차: 문자열 fallback (ast.Errors가 아닌 경우)
+				// second: string fallback (when it is not ast.Errors)
 				if !strings.Contains(err.Error(), "rego_type_error") {
 					t.Errorf("expected rego_type_error, got: %v", err)
 				}

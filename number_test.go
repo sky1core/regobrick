@@ -3,16 +3,18 @@ package regobrick
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math"
 	"strings"
 	"testing"
 
 	"github.com/open-policy-agent/opa/v1/rego"
+	"github.com/open-policy-agent/opa/v1/topdown"
 )
 
 // =============================================================================
-// Number 단위 테스트 (Scan, Value, JSON)
+// Number unit tests (Scan, Value, JSON)
 // =============================================================================
 
 func TestNumber_Scan_String(t *testing.T) {
@@ -160,7 +162,7 @@ func TestNumber_Value_EmptyString(t *testing.T) {
 }
 
 func TestNumber_MarshalJSON_EmptyString(t *testing.T) {
-	// json.Number는 빈 문자열을 0으로 출력 (Go 관례)
+	// json.Number outputs an empty string as 0 (Go convention)
 	var n Number
 	b, err := json.Marshal(n)
 	if err != nil {
@@ -172,8 +174,8 @@ func TestNumber_MarshalJSON_EmptyString(t *testing.T) {
 }
 
 func TestNumber_UnmarshalJSON_Null(t *testing.T) {
-	// json.Number는 null을 빈 문자열로 처리.
-	// 빈 문자열은 MarshalJSON에서 0으로 출력.
+	// json.Number treats null as an empty string.
+	// An empty string is output as 0 by MarshalJSON.
 	var n Number
 	err := json.Unmarshal([]byte("null"), &n)
 	if err != nil {
@@ -182,7 +184,7 @@ func TestNumber_UnmarshalJSON_Null(t *testing.T) {
 	if n.String() != "" {
 		t.Errorf("expected empty string, got %q", n.String())
 	}
-	// 빈 문자열 → 0으로 출력 (Go 관례)
+	// empty string -> output as 0 (Go convention)
 	b, err := json.Marshal(n)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -198,7 +200,7 @@ func TestNumber_MarshalJSON(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	// 숫자 리터럴 (따옴표 없이)
+	// numeric literal (without quotes)
 	if string(data) != "123.456" {
 		t.Errorf("got %s, want 123.456", string(data))
 	}
@@ -252,18 +254,18 @@ func TestNumber_UnmarshalJSON_InStruct(t *testing.T) {
 }
 
 func TestNumber_UnmarshalJSON_Precision(t *testing.T) {
-	// JSON Unmarshal이 float64를 거치지 않고 정밀도를 보존하는지 확인
+	// Verify that JSON Unmarshal preserves precision without going through float64
 	type Record struct {
 		Val Number `json:"val"`
 	}
-	// 38자리 - float64는 약 15~17자리만 표현 가능
+	// 38 digits - float64 can only represent about 15 to 17 digits
 	input := `{"val": 12345678901234567890123456789012345678.12}`
 	var r Record
 	err := json.Unmarshal([]byte(input), &r)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	// 정밀도가 보존되어야 함
+	// precision must be preserved
 	expected := "12345678901234567890123456789012345678.12"
 	if r.Val.String() != expected {
 		t.Errorf("precision loss: got %s, want %s", r.Val.String(), expected)
@@ -271,7 +273,7 @@ func TestNumber_UnmarshalJSON_Precision(t *testing.T) {
 }
 
 func TestNumber_Roundtrip_ScanValue(t *testing.T) {
-	// Scan → Value 왕복 테스트
+	// Scan -> Value roundtrip test
 	precision := "123456789012345678901234567890.12345678901234567890"
 	var n Number
 	if err := n.Scan(precision); err != nil {
@@ -287,7 +289,7 @@ func TestNumber_Roundtrip_ScanValue(t *testing.T) {
 }
 
 func TestNumber_Roundtrip_JSON(t *testing.T) {
-	// Marshal → Unmarshal 왕복 테스트
+	// Marshal -> Unmarshal roundtrip test
 	type Record struct {
 		Price Number `json:"price"`
 	}
@@ -308,13 +310,13 @@ func TestNumber_Roundtrip_JSON(t *testing.T) {
 }
 
 // =============================================================================
-// Rego 통합 테스트 (기존)
+// Rego integration tests (existing)
 // =============================================================================
 
 func TestNumber_WithDecimalOperators(t *testing.T) {
 	ensureDecimalArithmeticEnabled()
 
-	// Number 입력으로 Rego 연산이 정상 동작하는지 확인
+	// Verify that Rego operations work correctly with Number input
 	tests := []struct {
 		name     string
 		a, b     Number
@@ -366,9 +368,9 @@ result := input.a ` + tt.op + ` input.b
 func TestNumber_ExponentNotation(t *testing.T) {
 	ensureDecimalArithmeticEnabled()
 
-	// 지수 표기(예: "1e-8")는 udecimal 파싱 전에 평범한 십진 표기로 전개되므로
-	// 표준 OPA와 동일하게 정상 동작한다 (1e-8 + 1 == 1.00000001).
-	// 단, 전개 결과가 udecimal 정밀도(소수점 이하 19자리)를 벗어나면 여전히 실패한다.
+	// Exponent notation (e.g. "1e-8") is expanded into plain decimal notation
+	// before udecimal parsing, so it works the same as standard OPA (1e-8 + 1 == 1.00000001).
+	// However, if the expanded result exceeds udecimal's precision (19 digits after the decimal point), it still fails.
 
 	module := `package test
 result := input.a + input.b
@@ -377,7 +379,7 @@ result := input.a + input.b
 
 	t.Run("in_precision_succeeds", func(t *testing.T) {
 		input := map[string]any{
-			"a": Number("1e-8"), // 소수 8자리 → 정밀도 내
+			"a": Number("1e-8"), // 8 decimal places -> within precision
 			"b": Number("1"),
 		}
 		query, err := rego.New(
@@ -402,7 +404,7 @@ result := input.a + input.b
 	})
 
 	t.Run("out_of_precision_default_mode", func(t *testing.T) {
-		// 1e-25는 소수 25자리로 전개되어 udecimal 정밀도(19자리) 초과 → 실패
+		// 1e-25 expands to 25 decimal places, exceeding udecimal's precision (19 digits) -> fails
 		input := map[string]any{
 			"a": Number("1e-25"),
 			"b": Number("1"),
@@ -440,30 +442,35 @@ result := input.a + input.b
 
 		_, err = query.Eval(ctx, rego.EvalInput(input))
 		if err == nil {
-			t.Error("expected eval error for out-of-precision exponent, but got none")
-		} else if !strings.Contains(err.Error(), "eval_builtin_error") {
-			t.Fatalf("expected eval_builtin_error, got: %v", err)
+			t.Fatal("expected eval error for out-of-precision exponent, but got none")
+		}
+		var topdownErr *topdown.Error
+		if !errors.As(err, &topdownErr) {
+			t.Fatalf("expected topdown.Error, got %T: %v", err, err)
+		}
+		if topdownErr.Code != topdown.BuiltinErr {
+			t.Errorf("expected error code %s, got %s", topdown.BuiltinErr, topdownErr.Code)
 		}
 	})
 }
 
 func TestNumber_LeadingZero_Error(t *testing.T) {
-	// Leading zero ("01", "007" 등)는 JSON 스펙에서 invalid
+	// Leading zeros ("01", "007", etc.) are invalid per the JSON spec.
 	//
-	// 레이어별 동작:
-	// - udecimal.Parse("01") → 성공 (udecimal은 leading zero 허용)
-	// - ast.InterfaceToValue → 성공 (OPA는 검증 안 함)
-	// - encoding/json.Marshal → 실패 (Go JSON이 막음)
+	// Behavior by layer:
+	// - udecimal.Parse("01") -> succeeds (udecimal allows leading zeros)
+	// - ast.InterfaceToValue -> succeeds (OPA does not validate)
+	// - encoding/json.Marshal -> fails (Go JSON blocks it)
 	//
-	// 결론: rego.EvalInput 처리 중 Go의 json.Marshal에서 에러 발생
-	// 참고: exponent notation("1e-8")은 JSON valid → OPA 통과 → 십진 전개 후 정상 파싱
+	// Conclusion: the error occurs in Go's json.Marshal during rego.EvalInput processing
+	// Note: exponent notation ("1e-8") is valid JSON -> passes OPA -> parses correctly after decimal expansion
 
 	module := `package test
 result := input.a + input.b
 `
 	ctx := context.Background()
 	input := map[string]any{
-		"a": Number("01"), // Go json.Marshal에서 실패
+		"a": Number("01"), // fails in Go json.Marshal
 		"b": Number("1"),
 	}
 
@@ -475,10 +482,18 @@ result := input.a + input.b
 		t.Fatalf("prepare error: %v", err)
 	}
 
-	// Go encoding/json이 leading zero를 거부
+	// Go encoding/json rejects the leading zero while marshaling the input.
+	// The failure must originate from the json.Marshal layer (not udecimal or
+	// OPA), so the error message identifies the invalid numeric literal "01".
 	_, err = query.Eval(ctx, rego.EvalInput(input))
 	if err == nil {
-		t.Error("expected json.Marshal error due to leading zero, but got none")
+		t.Fatal("expected json.Marshal error due to leading zero, but got none")
+	}
+	if !strings.Contains(err.Error(), "invalid number literal") {
+		t.Errorf("expected a json.Marshal invalid-number-literal error, got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "01") {
+		t.Errorf("expected error to mention the offending literal %q, got: %v", "01", err)
 	}
 }
 
@@ -584,10 +599,12 @@ result := ` + tt.op + `
 }
 
 func TestNumber_FormatVariations(t *testing.T) {
-	// 다양한 형태의 Number 표현이 동일하게 처리되는지 확인
-	// udecimal.Parse가 정규화하므로 동등한 값은 동일하게 비교되어야 함
+	ensureDecimalArithmeticEnabled()
 
-	// 비교 테스트
+	// Verify that different Number representations are handled consistently.
+	// udecimal.Parse normalizes values, so equivalent values must compare equal.
+
+	// Comparison tests
 	comparisonTests := []struct {
 		name   string
 		a, b   Number
@@ -633,7 +650,7 @@ result := input.a == input.b
 		})
 	}
 
-	// 연산 테스트 (기대 결과 명시)
+	// Arithmetic tests (with explicit expected results)
 	arithmeticTests := []struct {
 		name       string
 		a, b       Number

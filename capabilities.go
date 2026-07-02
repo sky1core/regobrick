@@ -30,6 +30,11 @@ func infixAllowed(infix string) bool {
 //   - If a built-in has custom category mappings, those are also checked against allowedCats.
 //
 // The resulting capabilities object contains only the filtered built-ins.
+//
+// Call order contract: custom builtins registered via RegisterBuiltinX must be
+// registered (typically from init) before FilterCapabilities is called, so that
+// their category mappings are already recorded. Only then can those custom
+// builtins be matched and included by their categories.
 func FilterCapabilities(allowedNames []string, allowedCats []string) *ast.Capabilities {
 	nameSet := make(map[string]bool, len(allowedNames))
 	for _, n := range allowedNames {
@@ -65,7 +70,7 @@ nextBuiltin:
 			}
 		}
 
-		// 커스텀 빌트인에 대한 카테고리 매핑을 확인합니다.
+		// Check category mappings for custom builtins.
 		if customCats, ok := customBuiltinCategories[b.Name]; ok {
 			for _, cat := range customCats {
 				if catSet[cat] {

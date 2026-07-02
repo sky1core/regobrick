@@ -132,7 +132,7 @@ result := 10 / 0
 			t.Fatalf("unexpected eval error: %v", err)
 		}
 
-		// 기본 모드: 연산 실패 시 결과 없음 (에러 아님)
+		// Default mode: no result when the operation fails (not an error)
 		if len(rs) > 0 && len(rs[0].Expressions) > 0 {
 			t.Error("expected no result for divide by zero, but got result")
 		}
@@ -149,12 +149,12 @@ result := 10 / 0
 		}
 
 		_, err = query.Eval(ctx)
-		// Strict 모드: 에러가 상위로 전파됨
+		// Strict mode: the error propagates upward
 		if err == nil {
 			t.Fatal("expected eval error for divide by zero, but got none")
 		}
 
-		// 1차: typed error code 확인 (표준 OPA와 동일하게 divide by zero는 BuiltinErr)
+		// Step 1: check the typed error code (like standard OPA, divide by zero is BuiltinErr)
 		var topdownErr *topdown.Error
 		if !errors.As(err, &topdownErr) {
 			t.Fatalf("expected topdown.Error, got %T: %v", err, err)
@@ -162,7 +162,7 @@ result := 10 / 0
 		if topdownErr.Code != topdown.BuiltinErr {
 			t.Errorf("expected error code %s, got %s", topdown.BuiltinErr, topdownErr.Code)
 		}
-		// 2차: 메시지 확인 (표준 OPA와 동일한 "div: divide by zero")
+		// Step 2: check the message (same "div: divide by zero" as standard OPA)
 		if !strings.Contains(err.Error(), "div: divide by zero") {
 			t.Errorf("expected message to contain %q, got: %v", "div: divide by zero", err)
 		}
@@ -172,7 +172,7 @@ result := 10 / 0
 func TestDecimalOperators_ModuloByZero(t *testing.T) {
 	ensureDecimalArithmeticEnabled()
 
-	// 기본 모드: modulo by zero는 undefined 반환
+	// Default mode: modulo by zero returns undefined
 	t.Run("default_mode", func(t *testing.T) {
 		module := `package test
 result := 10 % 0
@@ -191,13 +191,13 @@ result := 10 % 0
 			t.Fatalf("unexpected error in default mode: %v", err)
 		}
 
-		// 기본 모드: 에러로 인해 undefined → len(rs)==0
+		// Default mode: undefined due to the error → len(rs)==0
 		if len(rs) != 0 {
 			t.Errorf("expected undefined (len(rs)==0) for modulo by zero, got %d results", len(rs))
 		}
 	})
 
-	// Strict 모드: modulo by zero는 에러 발생
+	// Strict mode: modulo by zero raises an error
 	t.Run("strict_mode", func(t *testing.T) {
 		module := `package test
 result := 10 % 0
@@ -217,7 +217,7 @@ result := 10 % 0
 			t.Fatal("expected eval error for modulo by zero, but got none")
 		}
 
-		// 1차: typed error code 확인 (표준 OPA와 동일하게 modulo by zero는 BuiltinErr)
+		// Step 1: check the typed error code (like standard OPA, modulo by zero is BuiltinErr)
 		var topdownErr *topdown.Error
 		if !errors.As(err, &topdownErr) {
 			t.Fatalf("expected topdown.Error, got %T: %v", err, err)
@@ -225,7 +225,7 @@ result := 10 % 0
 		if topdownErr.Code != topdown.BuiltinErr {
 			t.Errorf("expected error code %s, got %s", topdown.BuiltinErr, topdownErr.Code)
 		}
-		// 2차: 메시지 확인 (표준 OPA와 동일한 "rem: modulo by zero")
+		// Step 2: check the message (same "rem: modulo by zero" as standard OPA)
 		if !strings.Contains(err.Error(), "rem: modulo by zero") {
 			t.Errorf("expected message to contain %q, got: %v", "rem: modulo by zero", err)
 		}
@@ -293,14 +293,14 @@ func TestDecimalOperators_Unary(t *testing.T) {
 	}{
 		{"abs_positive", "abs(3.3)", "3.3"},
 		{"abs_negative", "abs(-3.3)", "3.3"},
-		// round는 half away from zero (OPA 기본 동작과 동일)
+		// round is half away from zero (same as OPA default behavior)
 		{"round_3.5", "round(3.5)", "4"},   // 3.5 → 4
 		{"round_2.5", "round(2.5)", "3"},   // 2.5 → 3
 		{"round_1.5", "round(1.5)", "2"},   // 1.5 → 2
 		{"round_0.5", "round(0.5)", "1"},   // 0.5 → 1
 		{"round_4.5", "round(4.5)", "5"},   // 4.5 → 5
-		{"round_3.4", "round(3.4)", "3"},   // 일반 반올림
-		{"round_3.6", "round(3.6)", "4"},   // 일반 반올림
+		{"round_3.4", "round(3.4)", "3"},   // ordinary rounding
+		{"round_3.6", "round(3.6)", "4"},   // ordinary rounding
 		{"round_neg", "round(-2.5)", "-3"}, // -2.5 → -3 (away from zero)
 		{"ceil", "ceil(3.1)", "4"},
 		{"floor", "floor(3.9)", "3"},
@@ -343,25 +343,25 @@ func TestDecimalOperators_Precision(t *testing.T) {
 		expr     string
 		expected string
 	}{
-		// 기본 정밀도 확인
+		// basic precision check
 		{"basic_add", "0.1 + 0.2", "0.3"},
-		// big.Float 정밀도 한계: 1.1 + 2.2 != 3.3 (Standard OPA), udecimal은 정확
+		// big.Float precision limit: 1.1 + 2.2 != 3.3 (Standard OPA), udecimal is exact
 		{"bigfloat_limit", "1.1 + 2.2", "3.3"},
 		{"bigfloat_limit_eq", "0.3 - 0.1 == 0.2", "true"},
 
-		// 긴 소수점 연산
+		// long decimal operations
 		{"long_decimal_add", "0.123456789 + 0.000000001", "0.12345679"},
 		{"long_decimal_sub", "1.123456789123456789 - 0.000000000000000001", "1.123456789123456788"},
 
-		// 큰 숫자 (float64는 약 15-17자리 정밀도)
+		// large numbers (float64 has about 15-17 digits of precision)
 		{"large_number_add", "9999999999999999 + 1", "10000000000000000"},
 		{"large_number_mul", "123456789 * 987654321", "121932631112635269"},
 
-		// 금융 계산 케이스
+		// financial calculation cases
 		{"money_mul", "100.25 * 0.03", "3.0075"},
-		{"money_div", "100 / 3", "33.3333333333333333333"}, // udecimal 기본 19자리 소수점
+		{"money_div", "100 / 3", "33.3333333333333333333"}, // udecimal defaults to 19 decimal places
 
-		// 비교 연산 정밀도
+		// comparison operator precision
 		{"compare_precision", "0.1 + 0.2 == 0.3", "true"},
 	}
 
@@ -407,7 +407,7 @@ func TestDecimalOperators_Precision(t *testing.T) {
 func TestDecimalOperators_SetMinus(t *testing.T) {
 	ensureDecimalArithmeticEnabled()
 
-	// set에 대한 minus 연산이 정상 작동하는지 확인
+	// verify that the minus operation works correctly on sets
 	module := `package test
 result := {1, 2, 3} - {2}
 `
@@ -429,7 +429,7 @@ result := {1, 2, 3} - {2}
 		t.Fatal("no result")
 	}
 
-	// set 결과 확인
+	// verify the set result
 	result := rs[0].Expressions[0].Value.([]interface{})
 	got := map[int]bool{}
 	for _, v := range result {
@@ -449,6 +449,156 @@ result := {1, 2, 3} - {2}
 	if len(got) != 2 || !got[1] || !got[3] {
 		t.Fatalf("set minus: got %v, want {1,3}", got)
 	}
+}
+
+// TestDecimalOperators_Minus_TypeMismatch exercises the three type-mismatch
+// branches of precisionMinus (operator.go): the operands reach runtime through
+// input (typed Any), so they bypass OPA's compile-time type checker and hit the
+// runtime type-error branches. Each case asserts the operand position and the
+// expected type string reported in strict mode.
+func TestDecimalOperators_Minus_TypeMismatch(t *testing.T) {
+	ensureDecimalArithmeticEnabled()
+
+	tests := []struct {
+		name    string
+		module  string
+		input   map[string]interface{}
+		wantMsg string
+	}{
+		{
+			// lhs is a number, rhs is a non-numeric string -> operand 2 must be number.
+			name:    "number_minus_nonnumeric_string",
+			module:  "package test\nimport rego.v1\nresult := 1 - input.b",
+			input:   map[string]interface{}{"b": "a"},
+			wantMsg: "operand 2 must be number",
+		},
+		{
+			// lhs is a set, rhs is a number -> operand 2 must be set.
+			name:    "set_minus_number",
+			module:  "package test\nimport rego.v1\nresult := {1} - input.b",
+			input:   map[string]interface{}{"b": 3},
+			wantMsg: "operand 2 must be set",
+		},
+		{
+			// lhs is neither number nor set -> operand 1 must be one of {number, set}.
+			name:    "bool_minus_number",
+			module:  "package test\nimport rego.v1\nresult := input.a - 1",
+			input:   map[string]interface{}{"a": true},
+			wantMsg: "operand 1 must be one of {number, set}",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := evalModule(t, tt.module, tt.input, rego.StrictBuiltinErrors(true))
+			if err == nil {
+				t.Fatal("expected eval error for type mismatch, got nil")
+			}
+			var topdownErr *topdown.Error
+			if !errors.As(err, &topdownErr) {
+				t.Fatalf("expected topdown.Error, got %T: %v", err, err)
+			}
+			if topdownErr.Code != topdown.TypeErr {
+				t.Fatalf("expected %s, got %s (%v)", topdown.TypeErr, topdownErr.Code, err)
+			}
+			if !strings.Contains(err.Error(), tt.wantMsg) {
+				t.Fatalf("expected message to contain %q, got: %v", tt.wantMsg, err)
+			}
+		})
+	}
+}
+
+// TestDecimalOperators_CoercionOff_ElementAndOperandErrors covers error paths in
+// operator.go that trigger with string coercion disabled (the default): aggregate
+// element type errors (elementToDecimal) and binary-operand type errors
+// (operandToDecimal), including the default (non-number, non-string) branches.
+func TestDecimalOperators_CoercionOff_ElementAndOperandErrors(t *testing.T) {
+	ensureDecimalArithmeticEnabled()
+
+	tests := []struct {
+		name    string
+		module  string
+		input   map[string]interface{}
+		wantMsg string
+	}{
+		{
+			// sum element is a non-numeric string; coercion off -> element type error.
+			name:    "sum_nonnumeric_string_element",
+			module:  "package test\nimport rego.v1\nresult := sum(input.arr)",
+			input:   map[string]interface{}{"arr": []interface{}{"abc"}},
+			wantMsg: "operand 1 must be array of number",
+		},
+		{
+			// sum element is a bool -> elementToDecimal's default branch.
+			name:    "sum_bool_element",
+			module:  "package test\nimport rego.v1\nresult := sum(input.arr)",
+			input:   map[string]interface{}{"arr": []interface{}{true}},
+			wantMsg: "operand 1 must be array of number",
+		},
+		{
+			// 1 + "abc": second operand is a non-numeric string, coercion off.
+			name:    "plus_nonnumeric_string_operand",
+			module:  "package test\nimport rego.v1\nresult := 1 + input.b",
+			input:   map[string]interface{}{"b": "abc"},
+			wantMsg: "operand 2 must be number",
+		},
+		{
+			// 1 + true: second operand hits operandToDecimal's default branch.
+			name:    "plus_bool_operand",
+			module:  "package test\nimport rego.v1\nresult := 1 + input.b",
+			input:   map[string]interface{}{"b": true},
+			wantMsg: "operand 2 must be number",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := evalModule(t, tt.module, tt.input, rego.StrictBuiltinErrors(true))
+			if err == nil {
+				t.Fatal("expected eval error, got nil")
+			}
+			var topdownErr *topdown.Error
+			if !errors.As(err, &topdownErr) {
+				t.Fatalf("expected topdown.Error, got %T: %v", err, err)
+			}
+			if topdownErr.Code != topdown.TypeErr {
+				t.Fatalf("expected %s, got %s (%v)", topdown.TypeErr, topdownErr.Code, err)
+			}
+			if !strings.Contains(err.Error(), tt.wantMsg) {
+				t.Fatalf("expected message to contain %q, got: %v", tt.wantMsg, err)
+			}
+		})
+	}
+}
+
+// TestDecimalOperators_Max_NumericElementParseError covers the numeric-mode parse
+// error branch of precisionMax: every element is numeric-like, but one is a Number
+// whose expanded value exceeds udecimal precision, so elementToDecimal returns the
+// raw parse error (BuiltinErr) rather than a type error.
+func TestDecimalOperators_Max_NumericElementParseError(t *testing.T) {
+	ensureDecimalArithmeticEnabled()
+
+	module := "package test\nresult := max([input.x, 1])"
+	input := map[string]interface{}{"x": Number("1e-25")}
+
+	t.Run("default_undefined", func(t *testing.T) {
+		rs := evalModuleResult(t, module, input)
+		requireUndefinedResult(t, rs)
+	})
+
+	t.Run("strict_error", func(t *testing.T) {
+		_, err := evalModule(t, module, input, rego.StrictBuiltinErrors(true))
+		if err == nil {
+			t.Fatal("expected eval error for out-of-precision element, got nil")
+		}
+		var topdownErr *topdown.Error
+		if !errors.As(err, &topdownErr) {
+			t.Fatalf("expected topdown.Error, got %T: %v", err, err)
+		}
+		if topdownErr.Code != topdown.BuiltinErr {
+			t.Fatalf("expected %s, got %s (%v)", topdown.BuiltinErr, topdownErr.Code, err)
+		}
+	})
 }
 
 func TestDecimalOperators_EqualityFallbackForNonNumbers(t *testing.T) {
@@ -496,23 +646,23 @@ func TestDecimalOperators_Aggregates(t *testing.T) {
 		expr     string
 		expected string
 	}{
-		// sum 테스트
+		// sum tests
 		{"sum_array", `sum([0.1, 0.2, 0.3])`, "0.6"},
-		{"sum_precision", `sum([0.1, 0.2])`, "0.3"}, // float64는 0.30000000000000004
+		{"sum_precision", `sum([0.1, 0.2])`, "0.3"}, // float64 gives 0.30000000000000004
 		{"sum_large", `sum([9999999999999999, 1])`, "10000000000000000"},
 		{"sum_empty", `sum([])`, "0"},
 
-		// product 테스트
+		// product tests
 		{"product_array", `product([2, 3, 4])`, "24"},
 		{"product_precision", `product([0.1, 0.2, 0.3])`, "0.006"},
 		{"product_empty", `product([])`, "1"},
 
-		// max 테스트
+		// max tests
 		{"max_array", `max([1, 3, 2])`, "3"},
 		{"max_precision", `max([0.1, 0.11, 0.09])`, "0.11"},
 		{"max_large", `max([9999999999999999, 9999999999999998])`, "9999999999999999"},
 
-		// min 테스트
+		// min tests
 		{"min_array", `min([3, 1, 2])`, "1"},
 		{"min_precision", `min([0.1, 0.11, 0.09])`, "0.09"},
 		{"min_large", `min([9999999999999999, 9999999999999998])`, "9999999999999998"},
@@ -591,7 +741,7 @@ func TestDecimalOperators_Aggregates_Set(t *testing.T) {
 func TestDecimalOperators_MaxMin_NonNumbers(t *testing.T) {
 	ensureDecimalArithmeticEnabled()
 
-	// max/min이 숫자가 아닌 경우에도 작동하는지 확인
+	// verify that max/min also work on non-numeric values
 	module := `package test
 result := {
   "max_str": max(["b", "a", "c"]),
@@ -705,7 +855,7 @@ result := {
 func TestDecimalOperators_NoStringCoercion_Default(t *testing.T) {
 	ensureDecimalArithmeticEnabled()
 
-	// WithStringCoercion()을 사용하지 않으면, 문자열 피연산자는 타입 에러
+	// Without WithStringCoercion(), a string operand is a type error
 	module := `package test
 import rego.v1
 result := input.a + input.b`
@@ -717,6 +867,12 @@ result := input.a + input.b`
 }
 
 func TestWithStringCoercion_PublicAPI(t *testing.T) {
+	// Register the cleanup first so an intermediate t.Fatalf cannot leak the
+	// coercion-ON global state into subsequent tests.
+	t.Cleanup(func() {
+		UseDecimalArithmetic()
+	})
+
 	module := `package test
 import rego.v1
 result := input.a + input.b`
@@ -751,8 +907,8 @@ func enableStringCoercion(t *testing.T) {
 func TestDecimalOperators_StringCoercion_Arithmetic(t *testing.T) {
 	enableStringCoercion(t)
 
-	// JSON input에서 문자열로 온 숫자에 대한 런타임 자동 변환 테스트
-	// OPA 컴파일러는 input 값의 타입을 모르므로 (any), 런타임 coercion이 동작함
+	// Test runtime automatic conversion of numbers arriving as strings in JSON input
+	// Since the OPA compiler does not know the type of input values (any), runtime coercion applies
 	module := `package test
 import rego.v1
 result_minus := input.a - input.b
@@ -903,7 +1059,7 @@ result_floor := floor(input.v)
 func TestDecimalOperators_StringCoercion_InvalidString(t *testing.T) {
 	enableStringCoercion(t)
 
-	// 숫자가 아닌 문자열은 여전히 에러 (input을 통해 런타임에 도달)
+	// non-numeric strings are still an error (reaching runtime via input)
 	module := `package test
 import rego.v1
 result := input.a + input.b`
@@ -955,14 +1111,14 @@ result := input.a + input.b`,
 func TestDecimalOperators_StringCoercion_InputParams(t *testing.T) {
 	enableStringCoercion(t)
 
-	// 실제 사용 시나리오: JSON input에서 문자열로 온 숫자
+	// Real-world usage scenario: a number arriving as a string in JSON input
 	module := `package test
 import rego.v1
 result := input.qty - input.pos`
 
 	rs := evalModuleResult(t, module, map[string]interface{}{
-		"qty": "0.73", // JSON 문자열
-		"pos": 0.5,    // JSON 숫자
+		"qty": "0.73", // JSON string
+		"pos": 0.5,    // JSON number
 	})
 	result := requireSingleExprValue(t, rs).(json.Number).String()
 	if result != "0.23" {
@@ -1388,8 +1544,8 @@ result := product({x | some x in input.arr})`,
 func TestDecimalOperators_Comparison_NonNumericUndefined(t *testing.T) {
 	ensureDecimalArithmeticEnabled()
 
-	// UseDecimalArithmetic에서 비교 연산자는 numeric-only이므로
-	// 비숫자 비교는 undefined가 되어야 함
+	// In UseDecimalArithmetic the comparison operators are numeric-only, so
+	// non-numeric comparisons should become undefined
 	tests := []struct {
 		name string
 		expr string
@@ -1412,7 +1568,7 @@ result if { ` + tt.expr + ` }`
 func TestDecimalOperators_StringCoercion_EqualityNotApplied(t *testing.T) {
 	enableStringCoercion(t)
 
-	// stringCoercion이 활성화되어도 ==, !=에는 적용되지 않음 (OPA 타입 시스템 유지)
+	// Even when stringCoercion is enabled, it is not applied to == and != (preserving OPA's type system)
 	tests := []struct {
 		name     string
 		module   string
@@ -1462,10 +1618,10 @@ func TestDecimalOperators_StringCoercion_EqualityNotApplied(t *testing.T) {
 func TestDecimalOperators_StringCoercion_MaxMin_MixedTypes(t *testing.T) {
 	enableStringCoercion(t)
 
-	// 숫자 문자열과 비숫자 타입(bool)이 혼합된 배열: 모든 요소가 numeric-like가
-	// 아니므로 숫자 모드로 가지 않고 기본 비교(ast.Compare) 순서로 폴백한다.
-	// 타입 순서(bool < number < string)에 따라 max는 "1"(문자열), min은 true.
-	// default/strict 어느 모드에서도 에러 없이 값을 반환해야 한다.
+	// Array mixing numeric strings and a non-numeric type (bool): since not all elements
+	// are numeric-like, it does not enter numeric mode and falls back to the default comparison (ast.Compare) order.
+	// By the type ordering (bool < number < string), max is "1" (a string) and min is true.
+	// In both default and strict modes it must return a value without error.
 	tests := []struct {
 		name     string
 		module   string
@@ -1513,7 +1669,7 @@ result := min(input.arr)`,
 func TestDecimalOperators_MaxMin_Empty(t *testing.T) {
 	ensureDecimalArithmeticEnabled()
 
-	// 빈 배열에 대한 max/min은 undefined 반환
+	// max/min on an empty array returns undefined
 	tests := []struct {
 		name string
 		expr string
@@ -1541,7 +1697,7 @@ func TestDecimalOperators_MaxMin_Empty(t *testing.T) {
 				t.Fatalf("eval error: %v", err)
 			}
 
-			// 빈 컬렉션에 대한 max/min은 undefined이므로 결과가 없어야 함
+			// max/min on an empty collection is undefined, so there should be no result
 			if len(rs) != 0 {
 				t.Errorf("expected undefined (len(rs)==0) for empty collection, got %d results: %v", len(rs), rs)
 			}
@@ -1549,36 +1705,43 @@ func TestDecimalOperators_MaxMin_Empty(t *testing.T) {
 	}
 }
 
-// TestExpandExponent는 지수 표기 전개 헬퍼의 단위 테스트.
+// TestExpandExponent is a unit test for the exponent-notation expansion helper.
 func TestExpandExponent(t *testing.T) {
 	tests := []struct {
 		in   string
 		want string
 	}{
-		{"1e-8", "0.00000001"},                   // 음의 지수
-		{"1e8", "100000000"},                     // 양의 지수
-		{"1E3", "1000"},                          // 대문자 E
-		{"-2.5E+3", "-2500"},                     // 부호 + 대문자 E + 소수점 가수
+		{"1e-8", "0.00000001"},                   // negative exponent
+		{"1e8", "100000000"},                     // positive exponent
+		{"1E3", "1000"},                          // uppercase E
+		{"-2.5E+3", "-2500"},                     // sign + uppercase E + decimal mantissa
 		{"1.5e0", "1.5"},                         // e0 (no shift)
-		{"1e0", "1"},                             // e0 정수
-		{"+1e2", "100"},                          // 양 부호
-		{"5e-1", "0.5"},                          // 소수 결과
-		{"1.23e2", "123"},                        // 소수점 가수, 양 지수
-		{"1.23e-2", "0.0123"},                    // 소수점 가수, 음 지수
-		{"0.5e1", "05"},                          // 선행 0 (udecimal이 허용)
-		{"1e-25", "0.0000000000000000000000001"}, // 정밀도 초과 전개 (여기선 전개만 검증)
-		{"123.45", "123.45"},                     // 지수 없음 → 그대로
-		{"100", "100"},                           // 정수 그대로
-		{"", ""},                                 // 빈 문자열 그대로
-		{"1eX", "1eX"},                           // 잘못된 지수부 → 그대로 (udecimal이 거부)
-		// 크기 가드: 전개 결과가 maxExpandedLen을 넘는 거대 지수는
-		// strings.Repeat로 할당 폭발을 일으키지 않고 원본을 그대로 반환
-		// (udecimal.Parse가 invalid format으로 거부 → 기존 에러 동작과 동일).
-		{"1e2000000000", "1e2000000000"},   // 거대 양의 지수 → 전개 안 함
-		{"1e-2000000000", "1e-2000000000"}, // 거대 음의 지수 → 전개 안 함
-		{"1e65", "1e65"},                   // 지수 상한(maxExpandedLen) 초과 → 전개 안 함
-		{"1e100", "1e100"},                 // udecimal 범위 초과 → 전개 안 함
-		{"1e999999999999999999999999", "1e999999999999999999999999"}, // int 범위 초과 지수 → 그대로
+		{"1e0", "1"},                             // e0 integer
+		{"+1e2", "100"},                          // positive sign
+		{"5e-1", "0.5"},                          // fractional result
+		{"1.23e2", "123"},                        // decimal mantissa, positive exponent
+		{"1.23e-2", "0.0123"},                    // decimal mantissa, negative exponent
+		{"0.5e1", "05"},                          // leading zero (allowed by udecimal)
+		{"1e-25", "0.0000000000000000000000001"}, // expansion beyond precision (only expansion is checked here)
+		{"123.45", "123.45"},                     // no exponent → unchanged
+		{"100", "100"},                           // integer unchanged
+		{"", ""},                                 // empty string unchanged
+		{"1eX", "1eX"},                           // invalid exponent part → unchanged (rejected by udecimal)
+		// Size guard: for huge exponents whose expansion would exceed maxExpandedLen,
+		// return the original unchanged instead of causing an allocation blowup via strings.Repeat
+		// (udecimal.Parse rejects it as invalid format → same as the existing error behavior).
+		{"1e2000000000", "1e2000000000"},   // huge positive exponent → not expanded
+		{"1e-2000000000", "1e-2000000000"}, // huge negative exponent → not expanded
+		{"1e65", "1e65"},                   // exceeds the exponent cap (maxExpandedLen) → not expanded
+		{"1e100", "1e100"},                 // exceeds udecimal range → not expanded
+		{"1e999999999999999999999999", "1e999999999999999999999999"}, // exponent exceeds int range → unchanged
+		// Size guard 2 (pre-computing expansion length): the exponent (e10) is within the cap so it passes
+		// guard 1, but expanding a 60-digit mantissa makes the result length exceed maxExpandedLen, so
+		// it is not expanded and the original is returned unchanged (rejected by udecimal → same error behavior).
+		{
+			"111111111111111111111111111111111111111111111111111111111111e10",
+			"111111111111111111111111111111111111111111111111111111111111e10",
+		},
 	}
 	for _, tt := range tests {
 		if got := expandExponent(tt.in); got != tt.want {
@@ -1587,13 +1750,13 @@ func TestExpandExponent(t *testing.T) {
 	}
 }
 
-// TestDecimalOperators_ExponentNotation는 지수 표기 숫자가 연산에서
-// 표준 OPA와 동일하게 동작하는지 검증 (회귀 방지).
+// TestDecimalOperators_ExponentNotation verifies that exponent-notation numbers behave
+// the same as standard OPA in operations (regression prevention).
 func TestDecimalOperators_ExponentNotation(t *testing.T) {
 	ensureDecimalArithmeticEnabled()
 
 	t.Run("plus", func(t *testing.T) {
-		// 표준 OPA: 1e-8 + 1 == 1.00000001
+		// Standard OPA: 1e-8 + 1 == 1.00000001
 		rs := evalModuleResult(t, "package test\nresult := 1e-8 + 1", nil)
 		if got := requireSingleExprValue(t, rs); fmt.Sprintf("%v", got) != "1.00000001" {
 			t.Errorf("expected 1.00000001, got %v", got)
@@ -1608,7 +1771,7 @@ func TestDecimalOperators_ExponentNotation(t *testing.T) {
 	})
 
 	t.Run("equal", func(t *testing.T) {
-		// 표준 OPA: 1e-8 == 0.00000001 → true
+		// Standard OPA: 1e-8 == 0.00000001 → true
 		rs := evalModuleResult(t, "package test\nresult := 1e-8 == 0.00000001", nil)
 		if got := requireSingleExprValue(t, rs); got != true {
 			t.Errorf("expected true, got %v", got)
@@ -1623,7 +1786,7 @@ func TestDecimalOperators_ExponentNotation(t *testing.T) {
 	})
 
 	t.Run("out_of_precision_default_undefined", func(t *testing.T) {
-		// 1e-25는 소수 25자리로 전개 → 정밀도(19자리) 초과 → undefined
+		// 1e-25 expands to 25 decimal places → exceeds precision (19 digits) → undefined
 		rs := evalModuleResult(t, "package test\nresult := 1e-25 + 1", nil)
 		requireUndefinedResult(t, rs)
 	})
@@ -1642,9 +1805,9 @@ func TestDecimalOperators_ExponentNotation(t *testing.T) {
 		}
 	})
 
-	// 거대 지수는 Rego 파서를 거치지 않는 런타임 input 경로로 들어올 수 있다.
-	// expandExponent의 크기 가드 덕분에 기가바이트급 문자열 할당 없이
-	// 곧바로 (udecimal invalid format) 에러 동작으로 끝나야 한다.
+	// Huge exponents can arrive via the runtime input path, which does not go through the Rego parser.
+	// Thanks to expandExponent's size guard, this must end immediately in the (udecimal invalid format)
+	// error behavior without any gigabyte-scale string allocation.
 	t.Run("huge_exponent_input_default_undefined", func(t *testing.T) {
 		for _, v := range []Number{"1e2000000000", "1e-2000000000"} {
 			rs := evalModuleResult(t, "package test\nresult := input.x + 1",
@@ -1671,8 +1834,8 @@ func TestDecimalOperators_ExponentNotation(t *testing.T) {
 	})
 }
 
-// TestDecimalOperators_StringCoercion_Exponent는 coercion ON에서 지수 표기
-// 문자열("1e-8")이 숫자로 변환되어 연산되는지 검증.
+// TestDecimalOperators_StringCoercion_Exponent verifies that, with coercion ON, an
+// exponent-notation string ("1e-8") is converted to a number and used in operations.
 func TestDecimalOperators_StringCoercion_Exponent(t *testing.T) {
 	enableStringCoercion(t)
 

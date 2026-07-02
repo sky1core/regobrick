@@ -44,12 +44,12 @@ func TestModule_BasicEvaluation(t *testing.T) {
 	}
 
 	// allow = undefined when user is not admin (no default_false import)
-	// OPA는 undefined 값에 대해 빈 결과를 반환함
+	// OPA returns an empty result for undefined values
 	rs, err = query.Eval(ctx, rego.EvalInput(map[string]any{"user": "guest"}))
 	if err != nil {
 		t.Fatalf("Eval failed: %v", err)
 	}
-	// undefined는 len(rs)==0이어야 함
+	// undefined should result in len(rs)==0
 	if len(rs) != 0 {
 		t.Errorf("expected undefined (len(rs)==0), got %d results: %v", len(rs), rs)
 	}
@@ -145,34 +145,34 @@ func TestModules_MultipleModules(t *testing.T) {
 func TestModule_WithImports(t *testing.T) {
 	ctx := context.Background()
 
-	// helper 모듈 정의
+	// helper module definition
 	helperPolicy := `
 		package helper
 		greeting := "hello from helper"
 	`
 
-	// main 모듈: import 없이 helper.greeting 참조 시도
-	// imports 파라미터로 data.helper를 주입해야만 동작함
+	// main module: attempts to reference helper.greeting without an import
+	// it only works if data.helper is injected via the imports parameter
 	mainPolicy := `
 		package main
 		result := helper.greeting
 	`
 
-	// imports 파라미터 없이 시도 - 실패해야 함
+	// attempt without the imports parameter - should fail
 	t.Run("without_imports_fails", func(t *testing.T) {
 		_, err := rego.New(
 			rego.Module("helper.rego", helperPolicy),
-			regobrick.Module("main.rego", mainPolicy, nil), // imports 없음
+			regobrick.Module("main.rego", mainPolicy, nil), // no imports
 			rego.Query("data.main.result"),
 		).PrepareForEval(ctx)
 
-		// helper를 import하지 않으면 컴파일 에러 발생
+		// a compile error occurs if helper is not imported
 		if err == nil {
 			t.Error("expected error without import, but got none")
 		}
 	})
 
-	// imports 파라미터로 data.helper 주입 - 성공해야 함
+	// inject data.helper via the imports parameter - should succeed
 	t.Run("with_imports_succeeds", func(t *testing.T) {
 		query, err := rego.New(
 			rego.Module("helper.rego", helperPolicy),
@@ -350,7 +350,7 @@ func TestModule_WithImports_DeduplicatesRepeatedInjectedImports(t *testing.T) {
 func TestModule_SyntaxError(t *testing.T) {
 	ctx := context.Background()
 
-	// 문법 에러가 있는 정책 - Module은 에러를 rego.Module로 위임
+	// policy with a syntax error - Module delegates the error to rego.Module
 	policy := `
 		package test
 		allow if {
@@ -363,14 +363,14 @@ func TestModule_SyntaxError(t *testing.T) {
 		rego.Query("data.test.allow"),
 	).PrepareForEval(ctx)
 
-	// 문법 에러가 발생해야 함
+	// a syntax error should occur
 	if err == nil {
 		t.Error("expected syntax error, got nil")
 	}
 }
 
-// TestModule_DefaultFalse_StrictMode default_false 변환된 모듈이 rego.Strict(true)에서
-// 컴파일되는지 확인 (수정 B: 마커 import가 제거되어 unused import 에러가 없어야 함).
+// TestModule_DefaultFalse_StrictMode verifies that a default_false-transformed module
+// compiles under rego.Strict(true) (fix B: the marker import is removed, so there should be no unused import error).
 func TestModule_DefaultFalse_StrictMode(t *testing.T) {
 	ctx := context.Background()
 
@@ -399,12 +399,12 @@ func TestModule_DefaultFalse_StrictMode(t *testing.T) {
 	}
 }
 
-// TestModule_FallbackForPlainV0Source v0 문법 소스 + imports 없음 + regobrick 미사용인 경우
-// 기존처럼 rego.Module 폴백으로 동작해야 한다 (수정 D의 폴백 경로).
+// TestModule_FallbackForPlainV0Source when the source uses v0 syntax + no imports + no regobrick usage,
+// it should fall back to rego.Module as before (fix D's fallback path).
 func TestModule_FallbackForPlainV0Source(t *testing.T) {
 	ctx := context.Background()
 
-	// v0 문법 (if 없이 = true { ... }) - v1 파서로는 파싱 실패한다.
+	// v0 syntax (= true { ... } without if) - fails to parse with the v1 parser.
 	policy := `package test
 allow = true { input.x == 1 }
 `
@@ -427,8 +427,8 @@ allow = true { input.x == 1 }
 	}
 }
 
-// TestModule_PanicOnV0WithImports imports를 요청했는데 파싱이 실패하면(v0 문법) panic해야 한다
-// (수정 D의 fail-fast 경로).
+// TestModule_PanicOnV0WithImports when imports are requested but parsing fails (v0 syntax), it should panic
+// (fix D's fail-fast path).
 func TestModule_PanicOnV0WithImports(t *testing.T) {
 	policy := `package test
 allow = true { input.x == 1 }
@@ -445,12 +445,12 @@ allow = true { input.x == 1 }
 		}
 	}()
 
-	// imports가 비어있지 않으므로 폴백 없이 panic해야 한다.
+	// since imports is not empty, it should panic without falling back.
 	regobrick.Module("test.rego", policy, []string{"data.helper"})(rego.New())
 }
 
-// TestModule_PanicOnUnknownFeature regobrick feature 오타는 소스가 regobrick을 참조하므로
-// panic으로 이어져야 한다 (수정 C + D).
+// TestModule_PanicOnUnknownFeature a typo in a regobrick feature should lead to a panic
+// because the source references regobrick (fix C + D).
 func TestModule_PanicOnUnknownFeature(t *testing.T) {
 	policy := `package test
 import data.regobrick.default_flase
@@ -491,7 +491,7 @@ func TestParseModule_Direct(t *testing.T) {
 		t.Errorf("expected package data.test, got %s", module.Package.Path.String())
 	}
 
-	// default rule이 추가되었는지 확인
+	// verify that the default rule was added
 	hasDefaultAllow := false
 	for _, rule := range module.Rules {
 		if rule.Default {

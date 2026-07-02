@@ -117,6 +117,29 @@ func main() {
 }
 ```
 
+### Fail-fast contract of `Module` / `Modules`
+
+`Module` (and `Modules`, which applies `Module` to each option) is **fail-fast**: it
+panics with a message like `regobrick: cannot process module "<filename>": <cause>`
+when regobrick was actually asked to do something — that is, `imports` is non-empty
+**or** the source references a `data.regobrick.` feature — but the module could not be
+processed (parse error, invalid injected import path, import name conflict, or an
+unknown regobrick feature).
+
+If nothing regobrick-specific was requested (empty `imports` **and** no
+`data.regobrick.` reference), a parse failure is **not** a panic: `Module` falls back
+to `rego.Module(filename, src)`, so plain modules keep compiling and surface their own
+errors later during compilation.
+
+If you want to handle these errors yourself instead of risking a panic, call
+`ParseModule` and pass the resulting `*ast.Module` to `rego.ParsedModule(...)`.
+
+> **v0 syntax constraint:** `Module` parses with the v1 parser, so a module written in
+> v0 syntax can only pass through the plain fallback path (empty `imports` and no
+> `data.regobrick.` feature). Combining v0 syntax with injected `imports` or a
+> regobrick feature triggers a v1 parse error on the requested path, which becomes a
+> panic under the fail-fast contract.
+
 ## Precision Arithmetic
 
 RegoBrick provides operator overloading for precision arithmetic using [udecimal](https://github.com/quagmt/udecimal) internally. Call `UseDecimalArithmetic()` once at startup to replace Rego's default float-based operators.
@@ -177,7 +200,7 @@ Below, **Decimal** = `UseDecimalArithmetic()`, **+Coercion** = `UseDecimalArithm
 | `100.25 * 0.03` | `3.0075` | `3.0075` |
 | `100 / 3` | `33.3333333333333333333` (19 dp) | `33.333333333333333332` (20 dp) |
 | `10 % 3` | `1` | `1` |
-| `10.5 % 3` | `1.5` | error (integers only) |
+| `10.5 % 3` | `1.5` | undefined / eval error (integers only) |
 | `1e-8 + 1` | `1.00000001` | `1.00000001` |
 | `1e-25 + 1` | undefined / eval error (expands past 19 dp) | `1` (big.Float precision loss) |
 | `{1,2,3} - {2}` | `{1,3}` (set diff) | `{1,3}` (set diff) |
@@ -231,8 +254,8 @@ Below, **Decimal** = `UseDecimalArithmetic()`, **+Coercion** = `UseDecimalArithm
 | `input.s % 3` (`{"s":"10"}`) | undefined | `1` | undefined |
 | `input.s > 0.5` (`{"s":"0.73"}`) | undefined | `true` (numeric) | `true` (type ordering) |
 | `input.s < 1` (`{"s":"0.73"}`) | undefined | `true` (numeric) | `false` (type ordering) |
-| `input.s >= 3.3` (`{"s":"3.3"}`) | undefined | `true` (numeric) | `false` (type ordering) |
-| `input.s <= 3.3` (`{"s":"2.2"}`) | undefined | `true` (numeric) | `true` (type ordering) |
+| `input.s >= 3.3` (`{"s":"3.3"}`) | undefined | `true` (numeric) | `true` (type ordering) |
+| `input.s <= 3.3` (`{"s":"2.2"}`) | undefined | `true` (numeric) | `false` (type ordering) |
 | `input.s == 3.3` (`{"s":"3.3"}`) | `false` | `false` (not coerced) | `false` |
 | `input.s != 3.3` (`{"s":"3.3"}`) | `true` | `true` (not coerced) | `true` |
 | `abs(input.s)` (`{"s":"-3.3"}`) | undefined | `3.3` | undefined |
@@ -338,4 +361,15 @@ func main() {
 
     fmt.Println("Query result:", rs)
 }
+```
+
+## Running the Integration Tests
+
+The integration tests live under `tests/integration` in a **separate Go module**
+(its own `go.mod`) and are gated behind the `integration` build tag. They require
+Docker (they use testcontainers to spin up real databases), so they are not run by
+the default `go test ./...`.
+
+```bash
+cd tests/integration && go test -tags=integration -v
 ```

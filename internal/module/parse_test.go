@@ -7,7 +7,7 @@ import (
 	"github.com/open-policy-agent/opa/v1/ast"
 )
 
-// TestAddDefaultFalse_BooleanRule boolean rule에 default가 추가되는지 확인
+// TestAddDefaultFalse_BooleanRule verifies that a default is added to a boolean rule
 func TestAddDefaultFalse_BooleanRule(t *testing.T) {
 	source := `package test
 import data.regobrick.default_false
@@ -19,7 +19,7 @@ allow if { input.x == 1 }
 		t.Fatalf("ParseModule error: %v", err)
 	}
 
-	// default allow = false가 추가되어야 함
+	// default allow = false should be added
 	hasDefault := false
 	for _, r := range mod.Rules {
 		if r.Default && r.Head.Ref().String() == "allow" {
@@ -33,7 +33,7 @@ allow if { input.x == 1 }
 	}
 }
 
-// TestAddDefaultFalse_ExistingDefault 이미 default가 있으면 중복 추가 안 됨
+// TestAddDefaultFalse_ExistingDefault no duplicate is added when a default already exists
 func TestAddDefaultFalse_ExistingDefault(t *testing.T) {
 	source := `package test
 import data.regobrick.default_false
@@ -46,7 +46,7 @@ allow if { input.x == 1 }
 		t.Fatalf("ParseModule error: %v", err)
 	}
 
-	// default가 1개만 있어야 함
+	// there should be exactly 1 default
 	defaultCount := 0
 	for _, r := range mod.Rules {
 		if r.Default && r.Head.Ref().String() == "allow" {
@@ -59,7 +59,7 @@ allow if { input.x == 1 }
 	}
 }
 
-// TestAddDefaultFalse_FunctionRule function rule은 skip
+// TestAddDefaultFalse_FunctionRule function rules are skipped
 func TestAddDefaultFalse_FunctionRule(t *testing.T) {
 	source := `package test
 import data.regobrick.default_false
@@ -71,7 +71,7 @@ is_admin(user) if { user == "admin" }
 		t.Fatalf("ParseModule error: %v", err)
 	}
 
-	// function rule에는 default가 추가되면 안 됨
+	// a default should not be added to a function rule
 	for _, r := range mod.Rules {
 		if r.Default {
 			t.Errorf("unexpected default rule: %v", r.Head.Ref())
@@ -79,7 +79,7 @@ is_admin(user) if { user == "admin" }
 	}
 }
 
-// TestAddDefaultFalse_NoImport import 없으면 default_false 미적용
+// TestAddDefaultFalse_NoImport default_false is not applied without the import
 func TestAddDefaultFalse_NoImport(t *testing.T) {
 	source := `package test
 
@@ -90,7 +90,7 @@ allow if { input.x == 1 }
 		t.Fatalf("ParseModule error: %v", err)
 	}
 
-	// import 없으면 default 추가 안 됨
+	// a default is not added without the import
 	for _, r := range mod.Rules {
 		if r.Default {
 			t.Errorf("unexpected default rule without import: %v", r.Head.Ref())
@@ -199,7 +199,7 @@ result := helper.value
 	}
 }
 
-// TestAddDefaultFalse_MultipleRules 여러 rule에 각각 default 추가
+// TestAddDefaultFalse_MultipleRules a default is added to each of several rules
 func TestAddDefaultFalse_MultipleRules(t *testing.T) {
 	source := `package test
 import data.regobrick.default_false
@@ -228,15 +228,15 @@ deny if { input.blocked }
 }
 
 // =============================================================================
-// 기존 동작 보장 테스트 - 수정 후에도 반드시 통과해야 함
+// Existing-behavior guarantee tests - must still pass after modifications
 // =============================================================================
 
-// TestMustWork_BooleanRuleVariants 다양한 형태의 boolean rule
+// TestMustWork_BooleanRuleVariants various forms of boolean rules
 func TestMustWork_BooleanRuleVariants(t *testing.T) {
 	tests := []struct {
 		name        string
 		source      string
-		wantDefault []string // default가 추가되어야 하는 rule 이름들
+		wantDefault []string // names of rules that should have a default added
 	}{
 		{
 			name: "simple_if",
@@ -261,7 +261,7 @@ allow if {
 import data.regobrick.default_false
 allow if { input.role == "admin" }
 allow if { input.role == "superuser" }`,
-			wantDefault: []string{"allow"}, // 하나만 추가되어야 함
+			wantDefault: []string{"allow"}, // only one should be added
 		},
 		{
 			name: "different_rules",
@@ -288,7 +288,7 @@ read_access if { input.level > 0 }`,
 				}
 			}
 
-			// 기대하는 모든 default가 있는지 확인
+			// verify that all expected defaults are present
 			for _, want := range tt.wantDefault {
 				if defaults[want] == 0 {
 					t.Errorf("expected default for %q, but not found", want)
@@ -298,7 +298,7 @@ read_access if { input.level > 0 }`,
 				}
 			}
 
-			// 기대하지 않는 default가 없는지 확인
+			// verify that no unexpected defaults are present
 			wantSet := make(map[string]bool)
 			for _, w := range tt.wantDefault {
 				wantSet[w] = true
@@ -312,7 +312,7 @@ read_access if { input.level > 0 }`,
 	}
 }
 
-// TestMustWork_PartialRules partial rule은 default 추가 안 됨
+// TestMustWork_PartialRules no default is added to partial rules
 func TestMustWork_PartialRules(t *testing.T) {
 	tests := []struct {
 		name   string
@@ -348,7 +348,7 @@ obj[k] := v if { k := "a"; v := 1 }`,
 	}
 }
 
-// TestMustWork_MixedRules boolean과 다른 타입 혼합
+// TestMustWork_MixedRules a mix of boolean and other rule types
 func TestMustWork_MixedRules(t *testing.T) {
 	source := `package test
 import data.regobrick.default_false
@@ -370,7 +370,7 @@ deny if { input.blocked }
 		}
 	}
 
-	// boolean rule만 default 있어야 함
+	// only boolean rules should have a default
 	if !defaults["allow"] {
 		t.Error("expected default for 'allow'")
 	}
@@ -378,7 +378,7 @@ deny if { input.blocked }
 		t.Error("expected default for 'deny'")
 	}
 
-	// partial rule에는 default 없어야 함
+	// partial rules should not have a default
 	if defaults["items"] {
 		t.Error("unexpected default for partial set 'items'")
 	}
@@ -387,7 +387,7 @@ deny if { input.blocked }
 	}
 }
 
-// TestMustWork_WithExistingDefault 기존 default 존중
+// TestMustWork_WithExistingDefault respects an existing default
 func TestMustWork_WithExistingDefault(t *testing.T) {
 	source := `package test
 import data.regobrick.default_false
@@ -424,10 +424,10 @@ deny if { input.blocked }
 }
 
 // =============================================================================
-// 조용한 실패(silent failure) 수정 재현 테스트
+// Regression tests reproducing the silent-failure fixes
 // =============================================================================
 
-// TestParseModule_PreservesAnnotations METADATA 어노테이션이 보존되는지 확인 (수정 A)
+// TestParseModule_PreservesAnnotations verifies that METADATA annotations are preserved (fix A)
 func TestParseModule_PreservesAnnotations(t *testing.T) {
 	source := `# METADATA
 # title: allow rule
@@ -448,7 +448,7 @@ allow if { input.x }
 	}
 }
 
-// TestParseModule_RemovesMarkerImport default_false 마커 import가 변환 후 제거되는지 확인 (수정 B)
+// TestParseModule_RemovesMarkerImport verifies the default_false marker import is removed after transformation (fix B)
 func TestParseModule_RemovesMarkerImport(t *testing.T) {
 	source := `package test
 import data.regobrick.default_false
@@ -466,7 +466,7 @@ allow if { input.x }
 	}
 }
 
-// TestParseModule_UnknownFeatureErrors 미지 feature 오타는 조용히 무시되지 않고 에러 (수정 C)
+// TestParseModule_UnknownFeatureErrors a typo in an unknown feature errors instead of being silently ignored (fix C)
 func TestParseModule_UnknownFeatureErrors(t *testing.T) {
 	source := `package test
 import data.regobrick.default_flase
@@ -485,7 +485,7 @@ allow if { input.x }
 	}
 }
 
-// TestParseModule_InvalidImportPathErrors 잘못된 주입 import 경로는 에러 (수정 E)
+// TestParseModule_InvalidImportPathErrors an invalid injected import path errors (fix E)
 func TestParseModule_InvalidImportPathErrors(t *testing.T) {
 	source := `package test
 allow if { input.x }
@@ -499,7 +499,7 @@ allow if { input.x }
 	}
 }
 
-// TestParseModule_DeduplicatesBracketNotationImport 브래킷 표기 경로도 Ref 기반으로 dedup (수정 E)
+// TestParseModule_DeduplicatesBracketNotationImport bracket-notation paths are also deduplicated based on Ref (fix E)
 func TestParseModule_DeduplicatesBracketNotationImport(t *testing.T) {
 	source := `package test
 import data["foo-bar"]
@@ -522,7 +522,7 @@ allow if { input.x }
 	}
 }
 
-// TestParseModule_AliasConflictErrors 기존 import alias와 이름 충돌 시 사전 검사 에러 (수정 E)
+// TestParseModule_AliasConflictErrors a pre-check error occurs on a name conflict with an existing import alias (fix E)
 func TestParseModule_AliasConflictErrors(t *testing.T) {
 	source := `package test
 import data.other as helper
@@ -541,8 +541,8 @@ result := helper.value
 	}
 }
 
-// TestParseModule_UnknownFeatureViaInjectedImportErrors 주입 imports 경로로 들어온
-// feature 오타도 에러가 나야 함 (검증 순서 수정: validate가 import 주입 뒤에 실행)
+// TestParseModule_UnknownFeatureViaInjectedImportErrors a feature typo coming in through the
+// injected imports path must also error (validation order fix: validate runs after import injection)
 func TestParseModule_UnknownFeatureViaInjectedImportErrors(t *testing.T) {
 	source := `package test
 allow if { input.x }
@@ -559,8 +559,8 @@ allow if { input.x }
 	}
 }
 
-// TestParseModule_FeatureViaInjectedImportApplies 주입 imports로 정상 feature를
-// 전달하면 transform이 적용되어야 함
+// TestParseModule_FeatureViaInjectedImportApplies passing a valid feature via the injected imports
+// should apply the transform
 func TestParseModule_FeatureViaInjectedImportApplies(t *testing.T) {
 	source := `package test
 allow if { input.x }
@@ -580,7 +580,7 @@ allow if { input.x }
 		t.Error("expected default_false transform to apply for injected feature import")
 	}
 
-	// 마커 import는 최종 AST에서 제거되어야 함
+	// the marker import should be removed from the final AST
 	for _, imp := range mod.Imports {
 		if ref, ok := imp.Path.Value.(ast.Ref); ok && ref.String() == "data.regobrick.default_false" {
 			t.Errorf("expected injected marker import to be removed, but it remains: %s", imp.String())
@@ -588,8 +588,8 @@ allow if { input.x }
 	}
 }
 
-// TestParseModule_NonDataInputImportPathErrors import 경로는 data 또는 input으로
-// 시작해야 함 (isImportRef head 검사)
+// TestParseModule_NonDataInputImportPathErrors an import path must start with data or
+// input (isImportRef head check)
 func TestParseModule_NonDataInputImportPathErrors(t *testing.T) {
 	source := `package test
 allow if { input.x }
@@ -605,7 +605,7 @@ allow if { input.x }
 		}
 	}
 
-	// input 루트는 유효해야 함
+	// an input root should be valid
 	mod, err := ParseModule("test.rego", source, []string{"input.user"})
 	if err != nil {
 		t.Fatalf("expected input-rooted import to be accepted, got: %v", err)
@@ -623,11 +623,11 @@ allow if { input.x }
 }
 
 // =============================================================================
-// 버그 검증 테스트 - 현재 동작을 기록 (수정 전/후 비교용)
+// Bug verification tests - record current behavior (for before/after comparison)
 // =============================================================================
 
-// TestBugFix_CompleteRuleNoDefault complete rule에는 default가 추가되면 안 됨
-// 버그: 현재는 x := 1에도 default x = false가 추가됨
+// TestBugFix_CompleteRuleNoDefault a default should not be added to a complete rule
+// Bug: currently default x = false is added even to x := 1
 func TestBugFix_CompleteRuleNoDefault(t *testing.T) {
 	source := `package test
 import data.regobrick.default_false
@@ -647,8 +647,8 @@ x := 1
 	}
 }
 
-// TestBugFix_ConditionalCompleteRuleNoDefault 조건부 complete rule에도 default 추가되면 안 됨
-// 버그: 현재는 x := 1 if {...}에도 default x = false가 추가됨
+// TestBugFix_ConditionalCompleteRuleNoDefault a default should not be added to a conditional complete rule either
+// Bug: currently default x = false is added even to x := 1 if {...}
 func TestBugFix_ConditionalCompleteRuleNoDefault(t *testing.T) {
 	source := `package test
 import data.regobrick.default_false
@@ -668,8 +668,8 @@ x := 1 if { input.y }
 	}
 }
 
-// TestBugFix_BooleanAssignmentNeedsDefault 명시적 boolean 할당에는 default 필요
-// 이건 정상 동작 - x := true if {...}에는 default가 있어야 함
+// TestBugFix_BooleanAssignmentNeedsDefault an explicit boolean assignment needs a default
+// This is correct behavior - x := true if {...} should have a default
 func TestBugFix_BooleanAssignmentNeedsDefault(t *testing.T) {
 	source := `package test
 import data.regobrick.default_false
