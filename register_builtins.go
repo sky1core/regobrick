@@ -12,11 +12,14 @@ import (
 // ------------------------------------------------------------
 // Internal category storage
 // ------------------------------------------------------------
+// customBuiltinCategories must only be modified during init.
+// Mutating global state at runtime pollutes shared state and causes unpredictable behavior.
+// (Beyond concurrency issues, changing global state at runtime is a design flaw.)
 var customBuiltinCategories = map[string][]string{}
 
 func storeCustomCategories(name string, categories []string) {
 	if len(categories) > 0 {
-		customBuiltinCategories[name] = categories
+		customBuiltinCategories[name] = append([]string(nil), categories...)
 	} else {
 		customBuiltinCategories[name] = nil
 	}

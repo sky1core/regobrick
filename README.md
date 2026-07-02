@@ -23,7 +23,8 @@ input := map[string]any{
 **Precision Limits (udecimal):**
 - Maximum **19 decimal places**
 - Range: ±34,028,236,692,093,846,346.3374607431768211455
-- Exceeding 19 decimal places results in **truncation** (not rounding)
+- Input values with more than 19 decimal places **fail to parse** (default mode: no result; `StrictBuiltinErrors(true)`: eval error) — they are *not* silently truncated
+- **Truncation** (not rounding) applies only to operation *results* that exceed 19 decimal places (e.g., `100 / 3` → `33.3333333333333333333`)
 - Sufficient for: BTC (8 decimals), ETH (18 decimals), fiat currencies
 
 ## Overview
@@ -69,7 +70,7 @@ func main() {
     subPolicy := `
         package sub
 
-        some_rule {
+        some_rule if {
             input.amount == 123.45
         }
     `
@@ -132,11 +133,117 @@ This overloads:
 - Arithmetic: `+`, `-`, `*`, `/`, `%`
 - Comparison: `>`, `>=`, `<`, `<=`, `==`, `!=`
 - Unary: `abs()`, `round()`, `ceil()`, `floor()`
+- Aggregates: `sum()`, `product()`, `max()`, `min()`
 
 Notes:
 - On error (e.g., divide by zero, invalid number format):
   - Default mode: operation silently fails (rule not satisfied)
   - `StrictBuiltinErrors(true)`: returns `eval_builtin_error`
+- `%` (modulo) supports floating-point operands (standard OPA allows integers only)
+- Decimal arithmetic configuration is **process-global**; call `UseDecimalArithmetic(...)` **once at application startup, before any evaluation begins**
+- It mutates process-global state without synchronization, so it is **not safe to call concurrently with evaluations**
+
+### String Coercion (opt-in)
+
+Use `WithStringCoercion()` to enable automatic string-to-number conversion. Numeric strings (e.g., `"0.73"`, `"100"`) from `input` or `data` are automatically converted to numbers in arithmetic, comparison, unary, and aggregate operations. This is useful when external systems pass decimal values as JSON strings to preserve precision.
+
+```go
+func init() {
+    regobrick.UseDecimalArithmetic(regobrick.WithStringCoercion())
+}
+```
+
+- **Applied to:** `+`, `-`, `*`, `/`, `%`, `>`, `>=`, `<`, `<=`, `abs`, `round`, `ceil`, `floor`, `sum`, `product`, `max`, `min`
+- **Not applied to:** `==`, `!=` (different types are always unequal, matching standard OPA behavior)
+- Non-numeric strings (e.g., `"abc"`) result in undefined / eval error
+
+```rego
+# input: {"qty": "0.73", "pos": 0.5}
+remaining := input.qty - input.pos    # 0.23 — string "0.73" auto-converted
+can_trade := input.qty > 0            # true
+rounded := round(input.qty)           # 1
+```
+
+> **Note:** String coercion is primarily for runtime values from `input`/`data`. Arithmetic (`+`, `-`, ...), unary (`abs`, ...), and the `sum`/`product` aggregates declare numeric operand types, so string literals written directly in Rego source (e.g., `"0.73" + 1`, `sum(["0.1"])`) are rejected by OPA's compile-time type checker before runtime coercion can run. This does **not** apply to `max`/`min`, whose operand is an `Any` collection: string literals pass the type checker and reach runtime, where non-numeric (or mixed) collections fall back to the default comparison ordering.
+
+### Comparison with Standard OPA
+
+Below, **Decimal** = `UseDecimalArithmetic()`, **+Coercion** = `UseDecimalArithmetic(WithStringCoercion())`.
+
+**Arithmetic** (number-only — same with or without `WithStringCoercion`):
+
+| Expression | Decimal / +Coercion | Standard OPA (big.Float) |
+|---|---|---|
+| `1.1 + 2.2` | `3.3` | `3.3000000000000000002` |
+| `0.3 - 0.1` | `0.2` | `0.20000000000000000002` |
+| `100.25 * 0.03` | `3.0075` | `3.0074999999999998` |
+| `100 / 3` | `33.3333333333333333333` (19 dp) | `33.333333333333333332` (20 dp) |
+| `10 % 3` | `1` | `1` |
+| `10.5 % 3` | `1.5` | error (integers only) |
+| `{1,2,3} - {2}` | `{1,3}` (set diff) | `{1,3}` (set diff) |
+
+**Comparison** (number-only — same with or without `WithStringCoercion`):
+
+| Expression | Decimal / +Coercion | Standard OPA |
+|---|---|---|
+| `0.3 - 0.1 == 0.2` | `true` | `false` |
+| `1.1 + 2.2 == 3.3` | `true` | `false` |
+| `3.3 > 2.2` | `true` | `true` |
+| `3.3 >= 3.3` | `true` | `true` |
+| `2.2 < 3.3` | `true` | `true` |
+| `2.2 <= 3.3` | `true` | `true` |
+| `"a" < "b"` | undefined | `true` (type ordering) |
+| `"hello" > 123` | undefined | `true` (type ordering) |
+
+**Unary** (number-only — same with or without `WithStringCoercion`):
+
+| Expression | Decimal / +Coercion | Standard OPA |
+|---|---|---|
+| `abs(-3.3)` | `3.3` | `3.3` |
+| `round(2.5)` | `3` (half away from zero) | `3` |
+| `round(-2.5)` | `-3` (half away from zero) | `-3` |
+| `ceil(3.1)` | `4` | `4` |
+| `floor(3.9)` | `3` | `3` |
+
+**Aggregates** (number-only — same with or without `WithStringCoercion`):
+
+| Expression | Decimal / +Coercion | Standard OPA |
+|---|---|---|
+| `sum([0.1, 0.2, 0.3])` | `0.6` | `0.6000000000000000003` |
+| `sum([])` | `0` | `0` |
+| `product([0.1, 0.2, 0.3])` | `0.006` | `0.006000000000000001` |
+| `product([])` | `1` | `1` |
+| `max([0.1, 0.11, 0.09])` | `0.11` | `0.11` |
+| `min([0.1, 0.11, 0.09])` | `0.09` | `0.09` |
+| `max(["b", "a", "c"])` | `"c"` | `"c"` |
+| `min(["b", "a", "c"])` | `"a"` | `"a"` |
+
+**String coercion** — values from `input`/`data`, only with `WithStringCoercion()`:
+
+| Expression | Decimal | +Coercion | Standard OPA |
+|---|---|---|---|
+| `input.s + 1` (`{"s":"0.73"}`) | undefined | `1.73` | undefined |
+| `input.s - 0.5` (`{"s":"0.73"}`) | undefined | `0.23` | undefined |
+| `input.a * input.b` (`{"a":"5.5","b":"2"}`) | undefined | `11` | undefined |
+| `input.s / 4` (`{"s":"10"}`) | undefined | `2.5` | undefined |
+| `input.s % 3` (`{"s":"10"}`) | undefined | `1` | undefined |
+| `input.s > 0.5` (`{"s":"0.73"}`) | undefined | `true` (numeric) | `true` (type ordering) |
+| `input.s < 1` (`{"s":"0.73"}`) | undefined | `true` (numeric) | `false` (type ordering) |
+| `input.s >= 3.3` (`{"s":"3.3"}`) | undefined | `true` (numeric) | `false` (type ordering) |
+| `input.s <= 3.3` (`{"s":"2.2"}`) | undefined | `true` (numeric) | `true` (type ordering) |
+| `input.s == 3.3` (`{"s":"3.3"}`) | `false` | `false` (not coerced) | `false` |
+| `input.s != 3.3` (`{"s":"3.3"}`) | `true` | `true` (not coerced) | `true` |
+| `abs(input.s)` (`{"s":"-3.3"}`) | undefined | `3.3` | undefined |
+| `round(input.s)` (`{"s":"3.5"}`) | undefined | `4` | undefined |
+| `ceil(input.s)` (`{"s":"3.1"}`) | undefined | `4` | undefined |
+| `floor(input.s)` (`{"s":"3.9"}`) | undefined | `3` | undefined |
+| `sum(input.arr)` (`{"arr":["0.1","0.2"]}`) | undefined | `0.3` | undefined |
+| `product(input.arr)` (`{"arr":["2","3"]}`) | undefined | `6` | undefined |
+| `max(input.arr)` (`{"arr":["1","10","2"]}`) | `"2"` (lexicographic) | `"10"` (numeric) | `"2"` (lexicographic) |
+| `min(input.arr)` (`{"arr":["1","10","2"]}`) | `"1"` (lexicographic) | `"1"` (numeric) | `"1"` (lexicographic) |
+| `input.s + 1` (`{"s":"abc"}`) | undefined | undefined | undefined |
+
+> **Note:** Standard OPA's comparison operators (`>`, `<`, `>=`, `<=`) support all types using type ordering (`null < bool < number < string < ...`). With `UseDecimalArithmetic`, comparison operators become **numeric-only** — non-number comparisons like `"a" < "b"` or `"hello" > 123` result in undefined. With `WithStringCoercion()`, numeric strings are additionally accepted as numbers.
 
 ## Writing Custom Builtins
 

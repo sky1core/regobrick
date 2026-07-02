@@ -197,6 +197,154 @@ func TestModule_WithImports(t *testing.T) {
 	})
 }
 
+func TestModule_WithImports_DeduplicatesExistingImport(t *testing.T) {
+	ctx := context.Background()
+
+	helperPolicy := `
+		package helper
+		value := "hello"
+	`
+
+	mainPolicy := `
+		package main
+		import data.helper
+
+		result := helper.value
+	`
+
+	query, err := rego.New(
+		rego.Module("helper.rego", helperPolicy),
+		regobrick.Module("main.rego", mainPolicy, []string{"data.helper"}),
+		rego.Query("data.main.result"),
+	).PrepareForEval(ctx)
+	if err != nil {
+		t.Fatalf("PrepareForEval failed: %v", err)
+	}
+
+	rs, err := query.Eval(ctx)
+	if err != nil {
+		t.Fatalf("Eval failed: %v", err)
+	}
+	if len(rs) == 0 || len(rs[0].Expressions) == 0 {
+		t.Fatal("expected result, got empty")
+	}
+	if rs[0].Expressions[0].Value != "hello" {
+		t.Fatalf("expected hello, got %v", rs[0].Expressions[0].Value)
+	}
+}
+
+func TestModule_WithImports_PreservesAliasedImportAndAddsPlainImport(t *testing.T) {
+	ctx := context.Background()
+
+	helperPolicy := `
+		package helper
+		value := "hello"
+	`
+
+	mainPolicy := `
+		package main
+		import data.helper as h
+
+		also := h.value
+		result := helper.value
+	`
+
+	query, err := rego.New(
+		rego.Module("helper.rego", helperPolicy),
+		regobrick.Module("main.rego", mainPolicy, []string{"data.helper"}),
+		rego.Query("data.main"),
+	).PrepareForEval(ctx)
+	if err != nil {
+		t.Fatalf("PrepareForEval failed: %v", err)
+	}
+
+	rs, err := query.Eval(ctx)
+	if err != nil {
+		t.Fatalf("Eval failed: %v", err)
+	}
+	if len(rs) == 0 || len(rs[0].Expressions) == 0 {
+		t.Fatal("expected result, got empty")
+	}
+
+	obj, ok := rs[0].Expressions[0].Value.(map[string]interface{})
+	if !ok {
+		t.Fatalf("expected object result, got %T", rs[0].Expressions[0].Value)
+	}
+	if obj["result"] != "hello" || obj["also"] != "hello" {
+		t.Fatalf("expected both imports to work, got %v", obj)
+	}
+}
+
+func TestModule_WithImports_DeduplicatesDefaultAliasImport(t *testing.T) {
+	ctx := context.Background()
+
+	helperPolicy := `
+		package helper
+		value := "hello"
+	`
+
+	mainPolicy := `
+		package main
+		import data.helper as helper
+
+		result := helper.value
+	`
+
+	query, err := rego.New(
+		rego.Module("helper.rego", helperPolicy),
+		regobrick.Module("main.rego", mainPolicy, []string{"data.helper"}),
+		rego.Query("data.main.result"),
+	).PrepareForEval(ctx)
+	if err != nil {
+		t.Fatalf("PrepareForEval failed: %v", err)
+	}
+
+	rs, err := query.Eval(ctx)
+	if err != nil {
+		t.Fatalf("Eval failed: %v", err)
+	}
+	if len(rs) == 0 || len(rs[0].Expressions) == 0 {
+		t.Fatal("expected result, got empty")
+	}
+	if rs[0].Expressions[0].Value != "hello" {
+		t.Fatalf("expected hello, got %v", rs[0].Expressions[0].Value)
+	}
+}
+
+func TestModule_WithImports_DeduplicatesRepeatedInjectedImports(t *testing.T) {
+	ctx := context.Background()
+
+	helperPolicy := `
+		package helper
+		value := "hello"
+	`
+
+	mainPolicy := `
+		package main
+		result := helper.value
+	`
+
+	query, err := rego.New(
+		rego.Module("helper.rego", helperPolicy),
+		regobrick.Module("main.rego", mainPolicy, []string{"data.helper", "data.helper"}),
+		rego.Query("data.main.result"),
+	).PrepareForEval(ctx)
+	if err != nil {
+		t.Fatalf("PrepareForEval failed: %v", err)
+	}
+
+	rs, err := query.Eval(ctx)
+	if err != nil {
+		t.Fatalf("Eval failed: %v", err)
+	}
+	if len(rs) == 0 || len(rs[0].Expressions) == 0 {
+		t.Fatal("expected result, got empty")
+	}
+	if rs[0].Expressions[0].Value != "hello" {
+		t.Fatalf("expected hello, got %v", rs[0].Expressions[0].Value)
+	}
+}
+
 func TestModule_SyntaxError(t *testing.T) {
 	ctx := context.Background()
 

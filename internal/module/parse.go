@@ -40,6 +40,9 @@ func addImport(mod *ast.Module, importPath string) {
 	if importPath == "" {
 		return
 	}
+	if hasImport(mod, importPath) {
+		return
+	}
 
 	parts := strings.Split(importPath, ".")
 	var ref ast.Ref
@@ -56,6 +59,28 @@ func addImport(mod *ast.Module, importPath string) {
 	mod.Imports = append(mod.Imports, &ast.Import{
 		Path: ast.NewTerm(ref),
 	})
+}
+
+func hasImport(mod *ast.Module, importPath string) bool {
+	parts := strings.Split(importPath, ".")
+	defaultAlias := ""
+	if len(parts) > 0 {
+		defaultAlias = parts[len(parts)-1]
+	}
+
+	for _, imp := range mod.Imports {
+		ref, ok := imp.Path.Value.(ast.Ref)
+		if !ok || ref.String() != importPath {
+			continue
+		}
+		// import data.helper        -> Alias == ""
+		// import data.helper as h   -> Alias == "h"
+		// import data.helper as helper -> effectively same as unaliased import
+		if imp.Alias == "" || string(imp.Alias) == defaultAlias {
+			return true
+		}
+	}
+	return false
 }
 
 // hasRegobrickFeature returns true if the module imports "data.regobrick.<feature>".

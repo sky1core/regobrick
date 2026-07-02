@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/open-policy-agent/opa/v1/ast"
 	"github.com/open-policy-agent/opa/v1/rego"
@@ -32,6 +33,7 @@ func toFloat64(v interface{}) (float64, bool) {
 
 // 테스트용 builtin 함수들
 var testCallCount int64
+var mutableCategory = []string{"mutable_test_category"}
 
 func resetCallCount() {
 	atomic.StoreInt64(&testCallCount, 0)
@@ -39,6 +41,36 @@ func resetCallCount() {
 
 func getCallCount() int64 {
 	return atomic.LoadInt64(&testCallCount)
+}
+
+func evalBuiltinModule(t *testing.T, queryText, module string, options ...func(*rego.Rego)) rego.ResultSet {
+	t.Helper()
+
+	ctx := context.Background()
+	args := []func(*rego.Rego){
+		rego.Query(queryText),
+		rego.Module("test.rego", module),
+	}
+	args = append(args, options...)
+
+	query, err := rego.New(args...).PrepareForEval(ctx)
+	if err != nil {
+		t.Fatalf("prepare error: %v", err)
+	}
+
+	rs, err := query.Eval(ctx)
+	if err != nil {
+		t.Fatalf("eval error: %v", err)
+	}
+	return rs
+}
+
+func requireBuiltinSingleValue(t *testing.T, rs rego.ResultSet) interface{} {
+	t.Helper()
+	if len(rs) == 0 || len(rs[0].Expressions) == 0 {
+		t.Fatal("expected single result, got none")
+	}
+	return rs[0].Expressions[0].Value
 }
 
 func init() {
@@ -432,6 +464,31 @@ func init() {
 		},
 		WithCategories("test"),
 	)
+
+	RegisterBuiltin0[[]string](
+		"test_nil_slice",
+		func(bctx rego.BuiltinContext) ([]string, error) {
+			return nil, nil
+		},
+		WithCategories("test"),
+	)
+
+	RegisterBuiltin0[int64](
+		"test_mutable_category_builtin",
+		func(bctx rego.BuiltinContext) (int64, error) {
+			return 1, nil
+		},
+		WithCategories(mutableCategory...),
+	)
+	mutableCategory[0] = "mutated_after_register"
+
+	RegisterBuiltin0[time.Time](
+		"test_fixed_time",
+		func(bctx rego.BuiltinContext) (time.Time, error) {
+			return time.Date(2024, 1, 2, 3, 4, 5, 0, time.UTC), nil
+		},
+		WithCategories("test"),
+	)
 }
 
 func TestConfigureFunction_Nil(t *testing.T) {
@@ -439,27 +496,10 @@ func TestConfigureFunction_Nil(t *testing.T) {
 	module := `package test
 result := test_nil_configurator("hello")
 `
-	ctx := context.Background()
-	query, err := rego.New(
-		rego.Query("data.test.result"),
-		rego.Module("test.rego", module),
-	).PrepareForEval(ctx)
-	if err != nil {
-		t.Fatalf("prepare error: %v", err)
-	}
-
-	rs, err := query.Eval(ctx)
-	if err != nil {
-		t.Fatalf("eval error: %v", err)
-	}
-
-	if len(rs) == 0 || len(rs[0].Expressions) == 0 {
-		t.Fatal("no result")
-	}
-
-	result, ok := toFloat64(rs[0].Expressions[0].Value)
+	rs := evalBuiltinModule(t, "data.test.result", module)
+	result, ok := toFloat64(requireBuiltinSingleValue(t, rs))
 	if !ok {
-		t.Fatalf("expected numeric result, got %T", rs[0].Expressions[0].Value)
+		t.Fatalf("expected numeric result, got %T", requireBuiltinSingleValue(t, rs))
 	}
 	if result != 5 {
 		t.Errorf("expected 5, got %v", result)
@@ -495,6 +535,44 @@ result := [r1, r2, r3]
 	t.Logf("test_memoized_strlen called %d times", count)
 	if count != 1 {
 		t.Errorf("expected 1 call (memoized), got %d", count)
+	}
+}
+
+func TestWithMemoize_DifferentArgumentsNotShared(t *testing.T) {
+	atomic.StoreInt64(&memoizedCallCount, 0)
+
+	module := `package test
+result := [
+	test_memoized_strlen("hello"),
+	test_memoized_strlen("world"),
+	test_memoized_strlen("hello"),
+]
+`
+	_ = evalBuiltinModule(t, "data.test.result", module)
+
+	if count := atomic.LoadInt64(&memoizedCallCount); count != 2 {
+		t.Fatalf("expected 2 calls for two distinct arguments, got %d", count)
+	}
+}
+
+func TestWithMemoize_ResetPerEvaluation(t *testing.T) {
+	atomic.StoreInt64(&memoizedCallCount, 0)
+
+	module := `package test
+result := test_memoized_strlen("hello")
+`
+	rs := evalBuiltinModule(t, "data.test.result", module)
+	if got, ok := toFloat64(requireBuiltinSingleValue(t, rs)); !ok || got != 5 {
+		t.Fatalf("expected first eval result 5, got %v", requireBuiltinSingleValue(t, rs))
+	}
+
+	rs = evalBuiltinModule(t, "data.test.result", module)
+	if got, ok := toFloat64(requireBuiltinSingleValue(t, rs)); !ok || got != 5 {
+		t.Fatalf("expected second eval result 5, got %v", requireBuiltinSingleValue(t, rs))
+	}
+
+	if count := atomic.LoadInt64(&memoizedCallCount); count != 2 {
+		t.Fatalf("expected memoization to reset per evaluation, got %d calls", count)
 	}
 }
 
@@ -662,6 +740,32 @@ func TestFilterCapabilities_ByName(t *testing.T) {
 	}
 }
 
+func TestWithCategories_CopiesSliceInput(t *testing.T) {
+	caps := FilterCapabilities(nil, []string{"mutable_test_category"})
+
+	foundOriginal := false
+	foundMutated := false
+	for _, b := range caps.Builtins {
+		if b.Name == "test_mutable_category_builtin" {
+			foundOriginal = true
+		}
+	}
+
+	caps = FilterCapabilities(nil, []string{"mutated_after_register"})
+	for _, b := range caps.Builtins {
+		if b.Name == "test_mutable_category_builtin" {
+			foundMutated = true
+		}
+	}
+
+	if !foundOriginal {
+		t.Fatal("expected builtin to remain in original category after caller slice mutation")
+	}
+	if foundMutated {
+		t.Fatal("builtin should not move to mutated category after registration")
+	}
+}
+
 // === 추가 RegisterBuiltinX_ 테스트 ===
 
 func TestRegisterBuiltin2__Success(t *testing.T) {
@@ -800,6 +904,26 @@ result if {
 	result := rs[0].Expressions[0].Value.(bool)
 	if !result {
 		t.Error("expected true, got false")
+	}
+}
+
+func TestRegisterBuiltin_ReturnsNilSliceAsNull(t *testing.T) {
+	module := `package test
+result := test_nil_slice()
+`
+	rs := evalBuiltinModule(t, "data.test.result", module)
+	if got := requireBuiltinSingleValue(t, rs); got != nil {
+		t.Fatalf("expected null result for nil slice, got %v (%T)", got, got)
+	}
+}
+
+func TestRegisterBuiltin_ReturnsTimeAsRFC3339String(t *testing.T) {
+	module := `package test
+result := test_fixed_time()
+`
+	rs := evalBuiltinModule(t, "data.test.result", module)
+	if got := requireBuiltinSingleValue(t, rs); got != "2024-01-02T03:04:05Z" {
+		t.Fatalf("expected RFC3339 string, got %v (%T)", got, got)
 	}
 }
 

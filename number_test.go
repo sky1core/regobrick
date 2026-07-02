@@ -35,6 +35,14 @@ func TestNumber_Scan_Bytes(t *testing.T) {
 	}
 }
 
+func TestNumber_Scan_EmptyBytes(t *testing.T) {
+	var n Number
+	err := n.Scan([]byte{})
+	if err == nil {
+		t.Fatal("expected error for empty bytes, got nil")
+	}
+}
+
 func TestNumber_Scan_Nil(t *testing.T) {
 	var n Number
 	err := n.Scan(nil)
@@ -62,6 +70,17 @@ func TestNumber_Scan_Int64(t *testing.T) {
 	}
 	if n.String() != "12345" {
 		t.Errorf("got %s, want 12345", n.String())
+	}
+}
+
+func TestNumber_Scan_UnsupportedType(t *testing.T) {
+	var n Number
+	err := n.Scan(struct{}{})
+	if err == nil {
+		t.Fatal("expected error for unsupported type, got nil")
+	}
+	if !strings.Contains(err.Error(), "unsupported type") {
+		t.Fatalf("expected unsupported type error, got %v", err)
 	}
 }
 
@@ -163,6 +182,14 @@ func TestNumber_UnmarshalJSON(t *testing.T) {
 	}
 	if n.String() != "456.789" {
 		t.Errorf("got %s, want 456.789", n.String())
+	}
+}
+
+func TestNumber_UnmarshalJSON_InvalidToken(t *testing.T) {
+	var n Number
+	err := json.Unmarshal([]byte(`"not-a-number"`), &n)
+	if err == nil {
+		t.Fatal("expected error for invalid numeric token, got nil")
 	}
 }
 
@@ -493,9 +520,9 @@ func TestNumber_FormatVariations(t *testing.T) {
 
 	// 비교 테스트
 	comparisonTests := []struct {
-		name     string
-		a, b     Number
-		wantEq   bool
+		name   string
+		a, b   Number
+		wantEq bool
 	}{
 		{"int_vs_decimal", Number("1"), Number("1.0"), true},
 		{"int_vs_decimal_zeros", Number("1"), Number("1.00"), true},

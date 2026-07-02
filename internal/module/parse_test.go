@@ -97,6 +97,107 @@ allow if { input.x == 1 }
 	}
 }
 
+func TestParseModule_DeduplicatesExistingImport(t *testing.T) {
+	source := `package test
+import data.helper
+
+result := helper.value
+`
+	mod, err := ParseModule("test.rego", source, []string{"data.helper"})
+	if err != nil {
+		t.Fatalf("ParseModule error: %v", err)
+	}
+
+	count := 0
+	for _, imp := range mod.Imports {
+		if ref, ok := imp.Path.Value.(ast.Ref); ok && ref.String() == "data.helper" {
+			count++
+		}
+	}
+	if count != 1 {
+		t.Fatalf("expected exactly 1 import for data.helper, got %d", count)
+	}
+}
+
+func TestParseModule_KeepsDistinctAliasedImport(t *testing.T) {
+	source := `package test
+import data.helper as h
+
+result := helper.value
+`
+	mod, err := ParseModule("test.rego", source, []string{"data.helper"})
+	if err != nil {
+		t.Fatalf("ParseModule error: %v", err)
+	}
+
+	count := 0
+	hasAliased := false
+	hasPlain := false
+	for _, imp := range mod.Imports {
+		ref, ok := imp.Path.Value.(ast.Ref)
+		if !ok || ref.String() != "data.helper" {
+			continue
+		}
+		count++
+		if imp.Alias == "h" {
+			hasAliased = true
+		}
+		if imp.Alias == "" {
+			hasPlain = true
+		}
+	}
+	if count != 2 {
+		t.Fatalf("expected aliased and plain imports for data.helper, got %d", count)
+	}
+	if !hasAliased || !hasPlain {
+		t.Fatalf("expected both aliased and plain imports, got aliased=%v plain=%v", hasAliased, hasPlain)
+	}
+}
+
+func TestParseModule_DeduplicatesDefaultAliasImport(t *testing.T) {
+	source := `package test
+import data.helper as helper
+
+result := helper.value
+`
+	mod, err := ParseModule("test.rego", source, []string{"data.helper"})
+	if err != nil {
+		t.Fatalf("ParseModule error: %v", err)
+	}
+
+	count := 0
+	for _, imp := range mod.Imports {
+		ref, ok := imp.Path.Value.(ast.Ref)
+		if ok && ref.String() == "data.helper" {
+			count++
+		}
+	}
+	if count != 1 {
+		t.Fatalf("expected default alias import to be deduplicated, got %d imports", count)
+	}
+}
+
+func TestParseModule_DeduplicatesRepeatedInjectedImports(t *testing.T) {
+	source := `package test
+
+result := helper.value
+`
+	mod, err := ParseModule("test.rego", source, []string{"data.helper", "data.helper"})
+	if err != nil {
+		t.Fatalf("ParseModule error: %v", err)
+	}
+
+	count := 0
+	for _, imp := range mod.Imports {
+		if ref, ok := imp.Path.Value.(ast.Ref); ok && ref.String() == "data.helper" {
+			count++
+		}
+	}
+	if count != 1 {
+		t.Fatalf("expected repeated injected imports to be deduplicated, got %d imports", count)
+	}
+}
+
 // TestAddDefaultFalse_MultipleRules 여러 rule에 각각 default 추가
 func TestAddDefaultFalse_MultipleRules(t *testing.T) {
 	source := `package test
@@ -132,8 +233,8 @@ deny if { input.blocked }
 // TestMustWork_BooleanRuleVariants 다양한 형태의 boolean rule
 func TestMustWork_BooleanRuleVariants(t *testing.T) {
 	tests := []struct {
-		name       string
-		source     string
+		name        string
+		source      string
 		wantDefault []string // default가 추가되어야 하는 rule 이름들
 	}{
 		{
