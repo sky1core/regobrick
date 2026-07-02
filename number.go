@@ -4,6 +4,7 @@ import (
 	"database/sql/driver"
 	"encoding/json"
 	"fmt"
+	"math"
 	"strconv"
 )
 
@@ -72,6 +73,12 @@ func (n *Number) Scan(src any) error {
 	case int64:
 		*n = Number(strconv.FormatInt(v, 10))
 	case float64:
+		if math.IsNaN(v) {
+			return fmt.Errorf("Number.Scan: cannot scan NaN into Number")
+		}
+		if math.IsInf(v, 0) {
+			return fmt.Errorf("Number.Scan: cannot scan Inf into Number")
+		}
 		*n = Number(strconv.FormatFloat(v, 'f', -1, 64))
 	default:
 		return fmt.Errorf("Number.Scan: unsupported type %T", src)

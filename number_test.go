@@ -3,6 +3,7 @@ package regobrick
 import (
 	"context"
 	"encoding/json"
+	"math"
 	"strings"
 	"testing"
 
@@ -59,6 +60,48 @@ func TestNumber_Scan_Float64(t *testing.T) {
 	}
 	if n.String() != "123.456" {
 		t.Errorf("got %s, want 123.456", n.String())
+	}
+}
+
+func TestNumber_Scan_Float64_NaN(t *testing.T) {
+	var n Number
+	err := n.Scan(math.NaN())
+	if err == nil {
+		t.Fatal("expected error for NaN, got nil")
+	}
+	if !strings.Contains(err.Error(), "NaN") {
+		t.Fatalf("expected NaN error, got %v", err)
+	}
+	if n.String() != "" {
+		t.Errorf("Number should not be mutated on NaN, got %q", n.String())
+	}
+}
+
+func TestNumber_Scan_Float64_PosInf(t *testing.T) {
+	var n Number
+	err := n.Scan(math.Inf(1))
+	if err == nil {
+		t.Fatal("expected error for +Inf, got nil")
+	}
+	if !strings.Contains(err.Error(), "Inf") {
+		t.Fatalf("expected Inf error, got %v", err)
+	}
+	if n.String() != "" {
+		t.Errorf("Number should not be mutated on +Inf, got %q", n.String())
+	}
+}
+
+func TestNumber_Scan_Float64_NegInf(t *testing.T) {
+	var n Number
+	err := n.Scan(math.Inf(-1))
+	if err == nil {
+		t.Fatal("expected error for -Inf, got nil")
+	}
+	if !strings.Contains(err.Error(), "Inf") {
+		t.Fatalf("expected Inf error, got %v", err)
+	}
+	if n.String() != "" {
+		t.Errorf("Number should not be mutated on -Inf, got %q", n.String())
 	}
 }
 
