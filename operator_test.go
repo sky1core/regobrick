@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"sync"
 	"testing"
@@ -153,17 +154,17 @@ result := 10 / 0
 			t.Fatal("expected eval error for divide by zero, but got none")
 		}
 
-		// 1차: typed error code 확인 (divide by zero는 TypeErr)
+		// 1차: typed error code 확인 (표준 OPA와 동일하게 divide by zero는 BuiltinErr)
 		var topdownErr *topdown.Error
 		if !errors.As(err, &topdownErr) {
 			t.Fatalf("expected topdown.Error, got %T: %v", err, err)
 		}
-		if topdownErr.Code != topdown.TypeErr {
-			t.Errorf("expected error code %s, got %s", topdown.TypeErr, topdownErr.Code)
+		if topdownErr.Code != topdown.BuiltinErr {
+			t.Errorf("expected error code %s, got %s", topdown.BuiltinErr, topdownErr.Code)
 		}
-		// 2차: 메시지 substring 확인 (보조)
-		if !strings.Contains(err.Error(), "divide by zero") {
-			t.Logf("warning: error message changed: %v", err)
+		// 2차: 메시지 확인 (표준 OPA와 동일한 "div: divide by zero")
+		if !strings.Contains(err.Error(), "div: divide by zero") {
+			t.Errorf("expected message to contain %q, got: %v", "div: divide by zero", err)
 		}
 	})
 }
@@ -216,17 +217,17 @@ result := 10 % 0
 			t.Fatal("expected eval error for modulo by zero, but got none")
 		}
 
-		// 1차: typed error code 확인 (modulo by zero는 TypeErr)
+		// 1차: typed error code 확인 (표준 OPA와 동일하게 modulo by zero는 BuiltinErr)
 		var topdownErr *topdown.Error
 		if !errors.As(err, &topdownErr) {
 			t.Fatalf("expected topdown.Error, got %T: %v", err, err)
 		}
-		if topdownErr.Code != topdown.TypeErr {
-			t.Errorf("expected error code %s, got %s", topdown.TypeErr, topdownErr.Code)
+		if topdownErr.Code != topdown.BuiltinErr {
+			t.Errorf("expected error code %s, got %s", topdown.BuiltinErr, topdownErr.Code)
 		}
-		// 2차: 메시지 substring 확인 (보조)
-		if !strings.Contains(err.Error(), "modulo by zero") {
-			t.Logf("warning: error message changed: %v", err)
+		// 2차: 메시지 확인 (표준 OPA와 동일한 "rem: modulo by zero")
+		if !strings.Contains(err.Error(), "rem: modulo by zero") {
+			t.Errorf("expected message to contain %q, got: %v", "rem: modulo by zero", err)
 		}
 	})
 }
@@ -1545,5 +1546,142 @@ func TestDecimalOperators_MaxMin_Empty(t *testing.T) {
 				t.Errorf("expected undefined (len(rs)==0) for empty collection, got %d results: %v", len(rs), rs)
 			}
 		})
+	}
+}
+
+// TestExpandExponent는 지수 표기 전개 헬퍼의 단위 테스트.
+func TestExpandExponent(t *testing.T) {
+	tests := []struct {
+		in   string
+		want string
+	}{
+		{"1e-8", "0.00000001"},                   // 음의 지수
+		{"1e8", "100000000"},                     // 양의 지수
+		{"1E3", "1000"},                          // 대문자 E
+		{"-2.5E+3", "-2500"},                     // 부호 + 대문자 E + 소수점 가수
+		{"1.5e0", "1.5"},                         // e0 (no shift)
+		{"1e0", "1"},                             // e0 정수
+		{"+1e2", "100"},                          // 양 부호
+		{"5e-1", "0.5"},                          // 소수 결과
+		{"1.23e2", "123"},                        // 소수점 가수, 양 지수
+		{"1.23e-2", "0.0123"},                    // 소수점 가수, 음 지수
+		{"0.5e1", "05"},                          // 선행 0 (udecimal이 허용)
+		{"1e-25", "0.0000000000000000000000001"}, // 정밀도 초과 전개 (여기선 전개만 검증)
+		{"123.45", "123.45"},                     // 지수 없음 → 그대로
+		{"100", "100"},                           // 정수 그대로
+		{"", ""},                                 // 빈 문자열 그대로
+		{"1eX", "1eX"},                           // 잘못된 지수부 → 그대로 (udecimal이 거부)
+		// 크기 가드: 전개 결과가 maxExpandedLen을 넘는 거대 지수는
+		// strings.Repeat로 할당 폭발을 일으키지 않고 원본을 그대로 반환
+		// (udecimal.Parse가 invalid format으로 거부 → 기존 에러 동작과 동일).
+		{"1e2000000000", "1e2000000000"},   // 거대 양의 지수 → 전개 안 함
+		{"1e-2000000000", "1e-2000000000"}, // 거대 음의 지수 → 전개 안 함
+		{"1e65", "1e65"},                   // 지수 상한(maxExpandedLen) 초과 → 전개 안 함
+		{"1e100", "1e100"},                 // udecimal 범위 초과 → 전개 안 함
+		{"1e999999999999999999999999", "1e999999999999999999999999"}, // int 범위 초과 지수 → 그대로
+	}
+	for _, tt := range tests {
+		if got := expandExponent(tt.in); got != tt.want {
+			t.Errorf("expandExponent(%q) = %q, want %q", tt.in, got, tt.want)
+		}
+	}
+}
+
+// TestDecimalOperators_ExponentNotation는 지수 표기 숫자가 연산에서
+// 표준 OPA와 동일하게 동작하는지 검증 (회귀 방지).
+func TestDecimalOperators_ExponentNotation(t *testing.T) {
+	ensureDecimalArithmeticEnabled()
+
+	t.Run("plus", func(t *testing.T) {
+		// 표준 OPA: 1e-8 + 1 == 1.00000001
+		rs := evalModuleResult(t, "package test\nresult := 1e-8 + 1", nil)
+		if got := requireSingleExprValue(t, rs); fmt.Sprintf("%v", got) != "1.00000001" {
+			t.Errorf("expected 1.00000001, got %v", got)
+		}
+	})
+
+	t.Run("max", func(t *testing.T) {
+		rs := evalModuleResult(t, "package test\nresult := max([1e-8, 2])", nil)
+		if got := requireSingleExprValue(t, rs); fmt.Sprintf("%v", got) != "2" {
+			t.Errorf("expected 2, got %v", got)
+		}
+	})
+
+	t.Run("equal", func(t *testing.T) {
+		// 표준 OPA: 1e-8 == 0.00000001 → true
+		rs := evalModuleResult(t, "package test\nresult := 1e-8 == 0.00000001", nil)
+		if got := requireSingleExprValue(t, rs); got != true {
+			t.Errorf("expected true, got %v", got)
+		}
+	})
+
+	t.Run("less_than", func(t *testing.T) {
+		rs := evalModuleResult(t, "package test\nresult := 1e-8 < 1", nil)
+		if got := requireSingleExprValue(t, rs); got != true {
+			t.Errorf("expected true, got %v", got)
+		}
+	})
+
+	t.Run("out_of_precision_default_undefined", func(t *testing.T) {
+		// 1e-25는 소수 25자리로 전개 → 정밀도(19자리) 초과 → undefined
+		rs := evalModuleResult(t, "package test\nresult := 1e-25 + 1", nil)
+		requireUndefinedResult(t, rs)
+	})
+
+	t.Run("out_of_precision_strict_error", func(t *testing.T) {
+		_, err := evalModule(t, "package test\nresult := 1e-25 + 1", nil, rego.StrictBuiltinErrors(true))
+		if err == nil {
+			t.Fatal("expected eval error for out-of-precision exponent, got none")
+		}
+		var topdownErr *topdown.Error
+		if !errors.As(err, &topdownErr) {
+			t.Fatalf("expected topdown.Error, got %T: %v", err, err)
+		}
+		if topdownErr.Code != topdown.BuiltinErr {
+			t.Errorf("expected %s, got %s", topdown.BuiltinErr, topdownErr.Code)
+		}
+	})
+
+	// 거대 지수는 Rego 파서를 거치지 않는 런타임 input 경로로 들어올 수 있다.
+	// expandExponent의 크기 가드 덕분에 기가바이트급 문자열 할당 없이
+	// 곧바로 (udecimal invalid format) 에러 동작으로 끝나야 한다.
+	t.Run("huge_exponent_input_default_undefined", func(t *testing.T) {
+		for _, v := range []Number{"1e2000000000", "1e-2000000000"} {
+			rs := evalModuleResult(t, "package test\nresult := input.x + 1",
+				map[string]interface{}{"x": v})
+			requireUndefinedResult(t, rs)
+		}
+	})
+
+	t.Run("huge_exponent_input_strict_error", func(t *testing.T) {
+		for _, v := range []Number{"1e2000000000", "1e-2000000000"} {
+			_, err := evalModule(t, "package test\nresult := input.x + 1",
+				map[string]interface{}{"x": v}, rego.StrictBuiltinErrors(true))
+			if err == nil {
+				t.Fatalf("expected eval error for huge exponent %s, got none", v)
+			}
+			var topdownErr *topdown.Error
+			if !errors.As(err, &topdownErr) {
+				t.Fatalf("expected topdown.Error, got %T: %v", err, err)
+			}
+			if topdownErr.Code != topdown.BuiltinErr {
+				t.Errorf("expected %s, got %s", topdown.BuiltinErr, topdownErr.Code)
+			}
+		}
+	})
+}
+
+// TestDecimalOperators_StringCoercion_Exponent는 coercion ON에서 지수 표기
+// 문자열("1e-8")이 숫자로 변환되어 연산되는지 검증.
+func TestDecimalOperators_StringCoercion_Exponent(t *testing.T) {
+	enableStringCoercion(t)
+
+	rs, err := evalModule(t, "package test\nimport rego.v1\nresult := input.s + 1",
+		map[string]interface{}{"s": "1e-8"})
+	if err != nil {
+		t.Fatalf("eval error: %v", err)
+	}
+	if got := requireSingleExprValue(t, rs); fmt.Sprintf("%v", got) != "1.00000001" {
+		t.Errorf("expected 1.00000001, got %v", got)
 	}
 }

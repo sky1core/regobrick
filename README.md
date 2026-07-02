@@ -14,10 +14,8 @@ input := map[string]any{
 ```
 
 **Contract:**
-- Exponent notation (`1e-8`, `2.5E10`) is **not supported**
-- If exponent notation is used with `UseDecimalArithmetic()`:
-  - Default mode: operation silently fails (rule not satisfied, no result)
-  - `StrictBuiltinErrors(true)`: returns `eval_builtin_error`
+- Exponent notation (`1e-8`, `2.5E10`) **is supported** in `UseDecimalArithmetic()`: it is expanded to plain decimal notation (`1e-8` → `0.00000001`) without floating-point round-trips before parsing, so `1e-8 + 1` yields `1.00000001` just like standard OPA
+  - Exception: if the expansion exceeds udecimal's precision (more than 19 decimal places, e.g. `1e-25`), parsing still fails — default mode: no result; `StrictBuiltinErrors(true)`: `eval_builtin_error`
 - Input validation is the caller's responsibility
 
 **Precision Limits (udecimal):**
@@ -176,10 +174,12 @@ Below, **Decimal** = `UseDecimalArithmetic()`, **+Coercion** = `UseDecimalArithm
 |---|---|---|
 | `1.1 + 2.2` | `3.3` | `3.3000000000000000002` |
 | `0.3 - 0.1` | `0.2` | `0.20000000000000000002` |
-| `100.25 * 0.03` | `3.0075` | `3.0074999999999998` |
+| `100.25 * 0.03` | `3.0075` | `3.0075` |
 | `100 / 3` | `33.3333333333333333333` (19 dp) | `33.333333333333333332` (20 dp) |
 | `10 % 3` | `1` | `1` |
 | `10.5 % 3` | `1.5` | error (integers only) |
+| `1e-8 + 1` | `1.00000001` | `1.00000001` |
+| `1e-25 + 1` | undefined / eval error (expands past 19 dp) | `1` (big.Float precision loss) |
 | `{1,2,3} - {2}` | `{1,3}` (set diff) | `{1,3}` (set diff) |
 
 **Comparison** (number-only — same with or without `WithStringCoercion`):
@@ -192,6 +192,8 @@ Below, **Decimal** = `UseDecimalArithmetic()`, **+Coercion** = `UseDecimalArithm
 | `3.3 >= 3.3` | `true` | `true` |
 | `2.2 < 3.3` | `true` | `true` |
 | `2.2 <= 3.3` | `true` | `true` |
+| `1e-8 == 0.00000001` | `true` | `true` |
+| `1e-8 < 1` | `true` | `true` |
 | `"a" < "b"` | undefined | `true` (type ordering) |
 | `"hello" > 123` | undefined | `true` (type ordering) |
 
@@ -209,9 +211,9 @@ Below, **Decimal** = `UseDecimalArithmetic()`, **+Coercion** = `UseDecimalArithm
 
 | Expression | Decimal / +Coercion | Standard OPA |
 |---|---|---|
-| `sum([0.1, 0.2, 0.3])` | `0.6` | `0.6000000000000000003` |
+| `sum([0.1, 0.2, 0.3])` | `0.6` | `0.6` |
 | `sum([])` | `0` | `0` |
-| `product([0.1, 0.2, 0.3])` | `0.006` | `0.006000000000000001` |
+| `product([0.1, 0.2, 0.3])` | `0.006` | `0.006000000000000000001` |
 | `product([])` | `1` | `1` |
 | `max([0.1, 0.11, 0.09])` | `0.11` | `0.11` |
 | `min([0.1, 0.11, 0.09])` | `0.09` | `0.09` |

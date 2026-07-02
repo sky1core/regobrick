@@ -3,6 +3,8 @@ package regobrick
 import (
 	"encoding/json"
 	"errors"
+	"strconv"
+	"strings"
 
 	"github.com/open-policy-agent/opa/v1/ast"
 	"github.com/open-policy-agent/opa/v1/topdown"
@@ -129,19 +131,121 @@ func registerDecimalBuiltins() {
 	topdown.RegisterBuiltinFunc(ast.Min.Name, precisionMin)
 }
 
+// maxExpandedLen은 지수 표기 전개 결과 문자열 길이의 상한입니다.
+//
+// udecimal이 표현 가능한 값은 정수부 최대 20자리 + 소수부 최대 19자리 수준이므로
+// (범위 ±34,028,236,692,093,846,346.3374607431768211455), 부호/소수점을 포함해도
+// 유효한 전개 결과는 이 상한을 크게 밑돕니다. 상한을 넘을 것이 확실한 전개는
+// 어차피 udecimal이 거부할 값이므로, strings.Repeat로 거대한 0 문자열을
+// 할당하지 않고(예: input 경로의 1e2000000000은 약 2GB 할당 유발) 원본을
+// 그대로 반환합니다. 그러면 udecimal.Parse가 지수 표기를 invalid format으로
+// 거부하여 기존 정밀도-한계 에러 동작과 동일하게 끝납니다.
+const maxExpandedLen = 64
+
+// expandExponent는 지수 표기(scientific notation) 숫자 문자열을 평범한 십진
+// 표기로 전개합니다. 예: "1e-8"→"0.00000001", "-2.5E+3"→"-2500", "1.5e0"→"1.5".
+//
+// float64를 경유하지 않고 순수 문자열 조작으로 소수점 위치만 이동시키므로
+// 정밀도 손실이 없습니다. 지수 표기가 아니거나(예: "123.45") 형식이 잘못된
+// 문자열은 그대로 반환하여 udecimal.Parse가 판단하도록 넘깁니다.
+//
+// 전개 결과가 udecimal 범위/정밀도(소수점 이하 19자리)를 벗어나는 경우
+// (예: "1e-25"→"0.0000...1", "1e30") udecimal.Parse가 에러를 반환하며,
+// 이는 문서화된 정밀도 한계입니다. 전개 결과 길이가 maxExpandedLen을 넘을
+// 것이 확실한 거대 지수(예: "1e2000000000")는 할당 폭발을 피하기 위해
+// 전개하지 않고 원본을 그대로 반환합니다 (udecimal이 거부 → 동일한 에러 동작).
+func expandExponent(s string) string {
+	ePos := strings.IndexAny(s, "eE")
+	if ePos < 0 {
+		return s
+	}
+
+	mantissa := s[:ePos]
+	exp, err := strconv.Atoi(s[ePos+1:])
+	if err != nil {
+		return s // 지수부가 정수가 아님(int 범위 초과 포함) → udecimal이 거부하도록 위임
+	}
+
+	// 크기 가드 1: 지수 절대값이 상한을 넘으면 전개 결과도 반드시 상한을 넘으므로
+	// 전개하지 않는다. (이후 newExp 계산의 정수 오버플로도 함께 차단)
+	if exp > maxExpandedLen || exp < -maxExpandedLen {
+		return s
+	}
+
+	// 가수부 부호 분리
+	sign := ""
+	if len(mantissa) > 0 && (mantissa[0] == '+' || mantissa[0] == '-') {
+		if mantissa[0] == '-' {
+			sign = "-"
+		}
+		mantissa = mantissa[1:]
+	}
+
+	// 정수부/소수부 분리
+	intPart := mantissa
+	fracPart := ""
+	if dot := strings.IndexByte(mantissa, '.'); dot >= 0 {
+		intPart = mantissa[:dot]
+		fracPart = mantissa[dot+1:]
+	}
+
+	digits := intPart + fracPart
+	if digits == "" {
+		return s
+	}
+	for i := 0; i < len(digits); i++ {
+		if digits[i] < '0' || digits[i] > '9' {
+			return s // 가수부에 숫자 외 문자 → udecimal이 거부하도록 위임
+		}
+	}
+
+	// 값 = digits × 10^(exp - len(fracPart))
+	newExp := exp - len(fracPart)
+
+	// 크기 가드 2: 전개 결과 길이를 사전 계산해 상한을 넘으면 전개하지 않는다.
+	// (newExp >= 0: len(digits)+newExp, newExp < 0: 최대 len(digits)+|newExp|+2)
+	absNewExp := newExp
+	if absNewExp < 0 {
+		absNewExp = -absNewExp
+	}
+	if len(digits)+absNewExp+2 > maxExpandedLen {
+		return s
+	}
+
+	var out string
+	if newExp >= 0 {
+		out = digits + strings.Repeat("0", newExp)
+	} else {
+		k := -newExp
+		if len(digits) > k {
+			out = digits[:len(digits)-k] + "." + digits[len(digits)-k:]
+		} else {
+			out = "0." + strings.Repeat("0", k-len(digits)) + digits
+		}
+	}
+	return sign + out
+}
+
+// parseDecimal은 숫자 문자열을 udecimal.Decimal로 파싱합니다.
+// 지수 표기를 먼저 평범한 십진 표기로 전개한 뒤 udecimal.Parse에 넘기므로,
+// "1e-8"과 같은 지수 표기도 정확히 파싱됩니다.
+func parseDecimal(s string) (udecimal.Decimal, error) {
+	return udecimal.Parse(expandExponent(s))
+}
+
 // toDecimal은 ast.Value를 udecimal.Decimal로 변환합니다.
 // ast.Number와 ast.String 모두 파싱을 시도하며, 실패 시 false를 반환합니다.
 // 저수준 헬퍼로, stringCoercion 조건은 호출자(isNumericType 등)가 판단합니다.
 func toDecimal(v ast.Value) (udecimal.Decimal, bool) {
 	switch val := v.(type) {
 	case ast.Number:
-		d, err := udecimal.Parse(string(val))
+		d, err := parseDecimal(string(val))
 		if err != nil {
 			return udecimal.Decimal{}, false
 		}
 		return d, true
 	case ast.String:
-		d, err := udecimal.Parse(string(val))
+		d, err := parseDecimal(string(val))
 		if err != nil {
 			return udecimal.Decimal{}, false
 		}
@@ -170,13 +274,13 @@ func isNumericType(v ast.Value) bool {
 }
 
 // operandToDecimal은 연산자 피연산자를 udecimal.Decimal로 변환합니다.
-// ast.Number의 파싱 에러(예: "1e-8")는 원래 에러를 그대로 반환하여
-// eval_builtin_error가 되도록 합니다.
+// ast.Number의 파싱 에러(예: 정밀도를 벗어나는 "1e-25")는 원래 에러를 그대로
+// 반환하여 eval_builtin_error가 되도록 합니다.
 // ast.String은 stringCoercion이 활성화된 경우에만 변환을 시도합니다.
 func operandToDecimal(v ast.Value, pos int) (udecimal.Decimal, error) {
 	switch val := v.(type) {
 	case ast.Number:
-		d, err := udecimal.Parse(string(val))
+		d, err := parseDecimal(string(val))
 		if err != nil {
 			return udecimal.Decimal{}, err
 		}
@@ -185,7 +289,7 @@ func operandToDecimal(v ast.Value, pos int) (udecimal.Decimal, error) {
 		if !decimalConfig.stringCoercion {
 			return udecimal.Decimal{}, builtins.NewOperandTypeErr(pos, v, "number")
 		}
-		d, err := udecimal.Parse(string(val))
+		d, err := parseDecimal(string(val))
 		if err != nil {
 			return udecimal.Decimal{}, builtins.NewOperandTypeErr(pos, v, "number")
 		}
@@ -201,7 +305,7 @@ func operandToDecimal(v ast.Value, pos int) (udecimal.Decimal, error) {
 func elementToDecimal(container ast.Value, elem *ast.Term) (udecimal.Decimal, error) {
 	switch val := elem.Value.(type) {
 	case ast.Number:
-		d, err := udecimal.Parse(string(val))
+		d, err := parseDecimal(string(val))
 		if err != nil {
 			return udecimal.Decimal{}, err
 		}
@@ -210,7 +314,7 @@ func elementToDecimal(container ast.Value, elem *ast.Term) (udecimal.Decimal, er
 		if !decimalConfig.stringCoercion {
 			return udecimal.Decimal{}, builtins.NewOperandElementErr(1, container, elem.Value, "number")
 		}
-		d, err := udecimal.Parse(string(val))
+		d, err := parseDecimal(string(val))
 		if err != nil {
 			return udecimal.Decimal{}, builtins.NewOperandElementErr(1, container, elem.Value, "number")
 		}
@@ -261,7 +365,7 @@ func precisionMinus(_ topdown.BuiltinContext, operands []*ast.Term, iter func(*a
 	numLike2 := isNumericType(operands[1].Value)
 
 	if numLike1 && numLike2 {
-		// operandToDecimal로 파싱하여 ast.Number의 파싱 에러(예: "1e-8") 보존
+		// operandToDecimal로 파싱하여 ast.Number의 파싱 에러(예: 정밀도 초과 "1e-25") 보존
 		d1, err := operandToDecimal(operands[0].Value, 1)
 		if err != nil {
 			return err
@@ -308,7 +412,9 @@ func precisionDivide(_ topdown.BuiltinContext, operands []*ast.Term, iter func(*
 	result, err := d1.Div(d2)
 	if err != nil {
 		if errors.Is(err, udecimal.ErrDivideByZero) {
-			return builtins.NewOperandErr(2, "divide by zero") // Note: standard OPA uses errors.New → BuiltinErr code; we use ErrOperand → TypeErr code
+			// 표준 OPA와 동일하게 plain error를 반환하여 eval_builtin_error 코드로 처리
+			// (OPA v1.11.0 topdown/arithmetic.go: errors.New("divide by zero")).
+			return errors.New("divide by zero")
 		}
 		return err
 	}
@@ -355,11 +461,11 @@ func precisionEqual(_ topdown.BuiltinContext, operands []*ast.Term, iter func(*a
 	n2, ok2 := operands[1].Value.(ast.Number)
 
 	if ok1 && ok2 {
-		d1, err := udecimal.Parse(string(n1))
+		d1, err := parseDecimal(string(n1))
 		if err != nil {
 			return err
 		}
-		d2, err := udecimal.Parse(string(n2))
+		d2, err := parseDecimal(string(n2))
 		if err != nil {
 			return err
 		}
@@ -375,11 +481,11 @@ func precisionNotEqual(_ topdown.BuiltinContext, operands []*ast.Term, iter func
 	n2, ok2 := operands[1].Value.(ast.Number)
 
 	if ok1 && ok2 {
-		d1, err := udecimal.Parse(string(n1))
+		d1, err := parseDecimal(string(n1))
 		if err != nil {
 			return err
 		}
-		d2, err := udecimal.Parse(string(n2))
+		d2, err := parseDecimal(string(n2))
 		if err != nil {
 			return err
 		}
@@ -398,7 +504,9 @@ func precisionRem(_ topdown.BuiltinContext, operands []*ast.Term, iter func(*ast
 		return err
 	}
 	if d2.IsZero() {
-		return builtins.NewOperandErr(2, "modulo by zero") // Note: standard OPA uses errors.New → BuiltinErr code; we use ErrOperand → TypeErr code
+		// 표준 OPA와 동일하게 plain error를 반환하여 eval_builtin_error 코드로 처리
+		// (OPA v1.11.0 topdown/arithmetic.go: errors.New("modulo by zero")).
+		return errors.New("modulo by zero")
 	}
 	result, err := d1.Mod(d2)
 	if err != nil {

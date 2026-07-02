@@ -3,6 +3,7 @@ package regobrick
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"math"
 	"strings"
 	"testing"
@@ -362,26 +363,50 @@ result := input.a ` + tt.op + ` input.b
 	}
 }
 
-func TestNumber_ExponentNotation_Error(t *testing.T) {
+func TestNumber_ExponentNotation(t *testing.T) {
 	ensureDecimalArithmeticEnabled()
 
-	// OPA API로 전달된 json.Number는 정규화되지 않고 그대로 유지됨.
-	// 따라서 Number("1e-8")는 연산 시 udecimal.Parse에서 실패.
-	//
-	// 동작은 OPA 설정에 따라 다름:
-	// - 기본 모드: 결과 없음 (규칙 미충족)
-	// - StrictBuiltinErrors: eval_builtin_error 발생
+	// 지수 표기(예: "1e-8")는 udecimal 파싱 전에 평범한 십진 표기로 전개되므로
+	// 표준 OPA와 동일하게 정상 동작한다 (1e-8 + 1 == 1.00000001).
+	// 단, 전개 결과가 udecimal 정밀도(소수점 이하 19자리)를 벗어나면 여전히 실패한다.
 
 	module := `package test
 result := input.a + input.b
 `
 	ctx := context.Background()
-	input := map[string]any{
-		"a": Number("1e-8"), // 지수표기 - udecimal 파싱 실패
-		"b": Number("1"),
-	}
 
-	t.Run("default_mode", func(t *testing.T) {
+	t.Run("in_precision_succeeds", func(t *testing.T) {
+		input := map[string]any{
+			"a": Number("1e-8"), // 소수 8자리 → 정밀도 내
+			"b": Number("1"),
+		}
+		query, err := rego.New(
+			rego.Query("data.test.result"),
+			rego.Module("test.rego", module),
+			rego.StrictBuiltinErrors(true),
+		).PrepareForEval(ctx)
+		if err != nil {
+			t.Fatalf("prepare error: %v", err)
+		}
+
+		rs, err := query.Eval(ctx, rego.EvalInput(input))
+		if err != nil {
+			t.Fatalf("unexpected eval error: %v", err)
+		}
+		if len(rs) == 0 || len(rs[0].Expressions) == 0 {
+			t.Fatal("expected result for exponent notation, got none")
+		}
+		if got := fmt.Sprintf("%v", rs[0].Expressions[0].Value); got != "1.00000001" {
+			t.Errorf("expected 1.00000001, got %s", got)
+		}
+	})
+
+	t.Run("out_of_precision_default_mode", func(t *testing.T) {
+		// 1e-25는 소수 25자리로 전개되어 udecimal 정밀도(19자리) 초과 → 실패
+		input := map[string]any{
+			"a": Number("1e-25"),
+			"b": Number("1"),
+		}
 		query, err := rego.New(
 			rego.Query("data.test.result"),
 			rego.Module("test.rego", module),
@@ -394,14 +419,16 @@ result := input.a + input.b
 		if err != nil {
 			t.Fatalf("unexpected eval error: %v", err)
 		}
-
-		// 기본 모드: 연산 실패 시 결과 없음 (에러 아님)
 		if len(rs) > 0 && len(rs[0].Expressions) > 0 {
-			t.Error("expected no result due to exponent notation, but got result")
+			t.Error("expected no result for out-of-precision exponent, but got result")
 		}
 	})
 
-	t.Run("strict_builtin_errors", func(t *testing.T) {
+	t.Run("out_of_precision_strict", func(t *testing.T) {
+		input := map[string]any{
+			"a": Number("1e-25"),
+			"b": Number("1"),
+		}
 		query, err := rego.New(
 			rego.Query("data.test.result"),
 			rego.Module("test.rego", module),
@@ -412,9 +439,8 @@ result := input.a + input.b
 		}
 
 		_, err = query.Eval(ctx, rego.EvalInput(input))
-		// Strict 모드: eval_builtin_error 발생
 		if err == nil {
-			t.Error("expected eval error due to exponent notation, but got none")
+			t.Error("expected eval error for out-of-precision exponent, but got none")
 		} else if !strings.Contains(err.Error(), "eval_builtin_error") {
 			t.Fatalf("expected eval_builtin_error, got: %v", err)
 		}
@@ -430,7 +456,7 @@ func TestNumber_LeadingZero_Error(t *testing.T) {
 	// - encoding/json.Marshal → 실패 (Go JSON이 막음)
 	//
 	// 결론: rego.EvalInput 처리 중 Go의 json.Marshal에서 에러 발생
-	// 참고: exponent notation("1e-8")은 JSON valid → OPA 통과 → udecimal.Parse 실패
+	// 참고: exponent notation("1e-8")은 JSON valid → OPA 통과 → 십진 전개 후 정상 파싱
 
 	module := `package test
 result := input.a + input.b
