@@ -65,6 +65,30 @@ func Inputs(n int) map[string]any {
 	}
 }
 
+// StringInputs mirrors Inputs but emits the collection elements (xs, ys) and
+// the scalar operands (price, qty) as JSON strings; the comparison reference
+// values (threshold, limit) stay numeric so the coercion work lands on the
+// per-element hot path. Only meaningful for the coercion benchmark package:
+// with WithStringCoercion() enabled the same policies evaluate over these
+// inputs through the string-to-number coercion path, measuring its overhead
+// relative to native numeric inputs.
+func StringInputs(n int) map[string]any {
+	xs := make([]any, n)
+	ys := make([]any, n)
+	for i := 0; i < n; i++ {
+		xs[i] = fmt.Sprintf("%d.%06d", i%1000, (i*7919)%1000000)
+		ys[i] = fmt.Sprintf("%d.%06d", (i%97)+1, (i*104729)%1000000)
+	}
+	return map[string]any{
+		"xs":        xs,
+		"ys":        ys,
+		"threshold": json.Number("500.5"),
+		"price":     "123.45",
+		"qty":       "10.5",
+		"limit":     json.Number("1000"),
+	}
+}
+
 // RunPolicyBenchmark prepares the policy once and measures repeated Eval calls.
 // Every iteration asserts a defined result: an undefined result would mean the
 // benchmark silently measures a failing evaluation path.

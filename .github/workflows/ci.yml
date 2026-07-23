@@ -51,12 +51,16 @@ jobs:
           go-version-file: go.mod
       - run: go test -run '^$' -fuzz FuzzExpandExponent -fuzztime 20s .
       - run: go test -run '^$' -fuzz FuzzParseDecimal -fuzztime 20s .
+      - run: go test -run '^$' -fuzz FuzzNumberJSONRoundTrip -fuzztime 20s .
+      - run: go test -run '^$' -fuzz FuzzNumberScanFloat -fuzztime 20s .
 
   govulncheck:
-    # Informational: findings for the Go standard library depend on the
-    # toolchain version and are resolved by toolchain bumps, not code changes.
+    # Blocking: the toolchain directive is kept at the lowest patch release
+    # with zero called vulnerabilities (currently go1.25.12), so a red run
+    # means either a newly published vulnerability or a regression — both
+    # worth failing CI for. Standard-library findings are resolved by
+    # toolchain bumps, not code changes.
     runs-on: ubuntu-latest
-    continue-on-error: true
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
