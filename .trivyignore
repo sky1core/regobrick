@@ -1,0 +1,24 @@
+# Trivy triage — mirrors tests/integration/osv-scanner.toml (same five Moby
+# vulnerabilities under their CVE aliases; see that file for the full
+# rationale). Summary: daemon-side vulnerabilities in the monolithic
+# github.com/docker/docker module, pulled in by the integration-test module
+# solely for its Docker API client (testcontainers-go). govulncheck call-graph
+# analysis reports zero reachable vulnerabilities; fixes exist only in Moby's
+# v2.0.0-beta module line, unreachable from the required 28.x (+incompatible)
+# line. Not part of the regobrick library dependency tree.
+#
+# Note: trivy may display a fixed version like "29.3.1" for some entries; that
+# is a Docker Engine product version — the github.com/docker/docker Go module
+# has no v29.x tags (29.x ships as the separate github.com/moby/moby/v2
+# module), so no upgrade path exists from this module's perspective.
+
+# GO-2026-4883: plugin privilege validation off-by-one (daemon)
+CVE-2026-33997
+# GO-2026-4887: AuthZ plugin bypass via oversized request bodies (daemon)
+CVE-2026-34040
+# GO-2026-5617: docker cp race, bind mount redirection (daemon)
+CVE-2026-42306
+# GO-2026-5668: docker cp race, arbitrary empty file creation (daemon)
+CVE-2026-41568
+# GO-2026-5746: containers archive endpoint executes container binary on host (daemon)
+CVE-2026-41567

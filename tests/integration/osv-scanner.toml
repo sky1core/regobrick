@@ -1,0 +1,38 @@
+# OSV-Scanner triage for the integration-test module.
+#
+# All entries below are Moby DAEMON-side vulnerabilities reported against the
+# monolithic github.com/docker/docker module, which this test-only module pulls
+# in solely for its Docker API CLIENT (via testcontainers-go). The daemon code
+# is never linked into any execution path here: govulncheck (call-graph
+# analysis, run with -tags integration) reports zero reachable vulnerabilities.
+# This module is not part of the regobrick library dependency tree, so nothing
+# propagates to library consumers.
+#
+# Fixes exist only in Moby's v2.0.0-beta line (GO-2026-4883/4887 fixed in
+# 2.0.0-beta.8, GO-2026-5617/5668/5746 in 2.0.0-beta.14), which is not
+# reachable by upgrading from the 28.x (+incompatible) line that
+# testcontainers-go requires — osv-scanner accordingly reports "0
+# vulnerabilities can be fixed". Ignores are per-ID, so newly published
+# docker/docker vulnerabilities will still fail the scan. Revisit these entries
+# when a stable Moby v2 module is released or testcontainers-go moves off the
+# 28.x line.
+
+[[IgnoredVulns]]
+id = "GO-2026-4883"
+reason = "Daemon-side (plugin privilege validation off-by-one); client-only usage, unreachable per govulncheck; fix only in unreachable v2.0.0-beta line"
+
+[[IgnoredVulns]]
+id = "GO-2026-4887"
+reason = "Daemon-side (AuthZ plugin bypass via oversized request bodies); client-only usage, unreachable per govulncheck; fix only in unreachable v2.0.0-beta line"
+
+[[IgnoredVulns]]
+id = "GO-2026-5617"
+reason = "Daemon-side (docker cp race, bind mount redirection); client-only usage, unreachable per govulncheck; fix only in unreachable v2.0.0-beta line"
+
+[[IgnoredVulns]]
+id = "GO-2026-5668"
+reason = "Daemon-side (docker cp race, arbitrary empty file creation); client-only usage, unreachable per govulncheck; fix only in unreachable v2.0.0-beta line"
+
+[[IgnoredVulns]]
+id = "GO-2026-5746"
+reason = "Daemon-side (containers archive endpoint executes container binary on host); client-only usage, unreachable per govulncheck; fix only in unreachable v2.0.0-beta line"
