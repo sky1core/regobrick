@@ -19,9 +19,9 @@ input := map[string]any{
 - Input validation is the caller's responsibility
 
 **Precision Limits (udecimal):**
-- Maximum **19 decimal places**
-- Range: ±34,028,236,692,093,846,346.3374607431768211455
-- Input values with more than 19 decimal places **fail to parse** (default mode: no result; `StrictBuiltinErrors(true)`: eval error) — they are *not* silently truncated
+- Maximum **19 decimal places** — input values with more **fail to parse** (default mode: no result; `StrictBuiltinErrors(true)`: eval error); they are *not* silently truncated
+- **Magnitude**: coefficients up to 128 bits (±34,028,236,692,093,846,346.3374607431768211455 at the full 19 decimal places) stay on udecimal's zero-allocation fast path; larger plain-notation values do **not** fail — udecimal falls back to exact `big.Int` arithmetic (slower, allocating)
+- **Exponent notation only**: expansion is capped at 64 characters (≈62 digits), so `1e61` parses but `1e62` and beyond (e.g. `1e100`) fail, while the same value written out in plain notation parses fine
 - **Truncation** (not rounding) applies only to operation *results* that exceed 19 decimal places (e.g., `100 / 3` → `33.3333333333333333333`)
 - Sufficient for: BTC (8 decimals), ETH (18 decimals), fiat currencies
 

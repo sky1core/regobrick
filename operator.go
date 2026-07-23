@@ -69,11 +69,17 @@ func WithStringCoercion() DecimalArithmeticOption {
 //
 // # Precision limits (udecimal)
 //
-//   - Maximum 19 decimal places
-//   - Range: ±34,028,236,692,093,846,346.3374607431768211455
-//   - Input values with more than 19 decimal places fail to parse
+//   - Maximum 19 decimal places; values with more fail to parse
 //     (default mode: no result; StrictBuiltinErrors: eval error).
 //     Truncation (not rounding) applies only to operation results, e.g. 100/3.
+//   - Magnitude: coefficients up to 128 bits
+//     (±34,028,236,692,093,846,346.3374607431768211455 at the full 19 decimal
+//     places) stay on udecimal's zero-allocation fast path; larger plain-notation
+//     values do not fail — udecimal falls back to exact big.Int arithmetic.
+//   - Exponent notation is expanded to plain notation before parsing under a
+//     64-character (≈62-digit) budget: 1e61 parses, 1e62 and beyond (e.g.
+//     1e100) fail, while the same magnitude written out in plain notation
+//     parses fine.
 //
 // # Error handling
 //
@@ -135,17 +141,17 @@ func registerDecimalBuiltins() {
 }
 
 // maxExpandedLen is the upper bound on the string length of an expanded exponent
-// notation result.
+// notation result. It is an allocation guard, not a udecimal limit: without it a
+// huge exponent from an input path (e.g. 1e2000000000) would trigger ~2GB of
+// zero-string allocation via strings.Repeat. When the bound is exceeded the
+// original string is returned unchanged and udecimal.Parse rejects the exponent
+// notation as an invalid format.
 //
-// The values udecimal can represent have at most ~20 integer digits + 19
-// fractional digits (range ±34,028,236,692,093,846,346.3374607431768211455), so
-// even including a sign and decimal point, any valid expansion is well under
-// this bound. An expansion certain to exceed the bound would be rejected by
-// udecimal anyway, so instead of allocating a huge zero string via
-// strings.Repeat (e.g. 1e2000000000 from an input path would trigger ~2GB of
-// allocation) the original string is returned unchanged. udecimal.Parse then
-// rejects the exponent notation as an invalid format, ending in the same
-// precision-limit error behavior as before.
+// Consequence: exponent-notation inputs are capped at a ~62-digit expansion
+// (1e61 parses; 1e62 and beyond, e.g. 1e100, fail) even though udecimal itself
+// could represent them via its big.Int fallback. The same magnitude written in
+// plain notation is unaffected by this cap. The bound comfortably covers the
+// u128 fast path (~39 significant digits, up to 19 of them fractional).
 const maxExpandedLen = 64
 
 // expandExponent expands a scientific-notation number string into plain decimal
@@ -155,12 +161,12 @@ const maxExpandedLen = 64
 // through float64, so there is no precision loss. Non-exponent (e.g. "123.45")
 // or malformed strings are returned unchanged for udecimal.Parse to decide on.
 //
-// When the expanded result exceeds udecimal's range/precision (19 fractional
-// digits) (e.g. "1e-25"→"0.0000...1", "1e30"), udecimal.Parse returns an error;
-// this is the documented precision limit. A huge exponent whose expansion is
-// certain to exceed maxExpandedLen (e.g. "1e2000000000") is not expanded and the
-// original string is returned to avoid an allocation blowup (udecimal rejects it
-// → same error behavior).
+// When the expanded result exceeds udecimal's precision (19 fractional digits,
+// e.g. "1e-25"→"0.0000...1"), udecimal.Parse returns an error; this is the
+// documented precision limit. An exponent whose expansion would exceed
+// maxExpandedLen (e.g. "1e100", "1e2000000000") is not expanded and the
+// original string is returned to avoid an allocation blowup; udecimal then
+// rejects the un-expanded exponent notation as an invalid format.
 func expandExponent(s string) string {
 	ePos := strings.IndexAny(s, "eE")
 	if ePos < 0 {

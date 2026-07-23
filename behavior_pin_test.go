@@ -3,6 +3,7 @@ package regobrick
 import (
 	"encoding/json"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -135,6 +136,52 @@ result := pin_time_echo(input.ts)`
 	if got := requireSingleExprValue(t, rs); got != "2026-01-02T03:04:05Z" {
 		t.Fatalf("time arg: got %v (%T), want RFC3339 string", got, got)
 	}
+}
+
+// Pin: magnitude is NOT capped at the u128 fast-path bound. Plain-notation
+// values beyond 2^128 parse and compute exactly via udecimal's big.Int
+// fallback; only the 19-decimal-place scale is a hard limit. Exponent notation
+// is additionally subject to the 64-character expansion budget: 1e30 works,
+// 1e100 is undefined.
+func TestPin_LargeMagnitudeNumbers(t *testing.T) {
+	ensureDecimalArithmeticEnabled()
+
+	// 2^128 + 1: beyond the u128 coefficient fast path, still exact.
+	module := `package test
+import rego.v1
+result := input.a + 1`
+	rs := evalModuleResult(t, module, map[string]any{
+		"a": Number("340282366920938463463374607431768211456"),
+	})
+	if got := requireSingleExprValue(t, rs).(json.Number).String(); got != "340282366920938463463374607431768211457" {
+		t.Fatalf("2^128 + 1: got %s", got)
+	}
+
+	// 1e30 expands within the 64-character budget and computes exactly.
+	module = `package test
+import rego.v1
+result := 1e30 + 1`
+	rs = evalModuleResult(t, module, nil)
+	if got := requireSingleExprValue(t, rs).(json.Number).String(); got != "1000000000000000000000000000001" {
+		t.Fatalf("1e30 + 1: got %s", got)
+	}
+
+	// Expansion-budget boundary: 1e61 (62 digits) still parses, 1e62 is the
+	// first magnitude to exceed the budget.
+	module = `package test
+import rego.v1
+result := input.a + 1`
+	rs = evalModuleResult(t, module, map[string]any{"a": Number("1e61")})
+	want := "1" + strings.Repeat("0", 60) + "1"
+	if got := requireSingleExprValue(t, rs).(json.Number).String(); got != want {
+		t.Fatalf("1e61 + 1: got %s, want %s", got, want)
+	}
+	rs = evalModuleResult(t, module, map[string]any{"a": Number("1e62")})
+	requireUndefinedResult(t, rs)
+
+	// 1e100 exceeds the expansion budget: undefined instead of a huge result.
+	rs = evalModuleResult(t, module, map[string]any{"a": Number("1e100")})
+	requireUndefinedResult(t, rs)
 }
 
 // Pin: struct arguments/returns cross the boundary as objects keyed by their
