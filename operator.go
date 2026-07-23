@@ -75,7 +75,9 @@ func WithStringCoercion() DecimalArithmeticOption {
 //   - Magnitude: coefficients up to 128 bits
 //     (±34,028,236,692,093,846,346.3374607431768211455 at the full 19 decimal
 //     places) stay on udecimal's zero-allocation fast path; larger plain-notation
-//     values do not fail — udecimal falls back to exact big.Int arithmetic.
+//     values fall back to udecimal's exact big.Int arithmetic instead of
+//     failing, up to udecimal's input hard cap of 200 characters per number
+//     string, beyond which parsing fails.
 //   - Exponent notation is expanded to plain notation before parsing under a
 //     64-character (≈62-digit) budget: 1e61 parses, 1e62 and beyond (e.g.
 //     1e100) fail, while the same magnitude written out in plain notation
@@ -102,6 +104,11 @@ func WithStringCoercion() DecimalArithmeticOption {
 // It mutates process-global state (OPA's builtin registry and the coercion
 // setting) without synchronization, so it is not safe to call concurrently
 // with evaluations.
+//
+// The documented parsing/truncation contract relies on udecimal's default
+// global settings; calling udecimal.SetDefaultPrecision or
+// udecimal.SetDefaultParseMode elsewhere in the same process would silently
+// change it.
 func UseDecimalArithmetic(opts ...DecimalArithmeticOption) {
 	cfg := decimalArithmeticConfig{}
 	for _, opt := range opts {
@@ -195,7 +202,7 @@ func expandExponent(s string) string {
 		mantissa = mantissa[1:]
 	}
 
-	// Separate the integer and fractional parts.
+	// Separate the integer and fractional parts (substrings of s, not copies).
 	intPart := mantissa
 	fracPart := ""
 	if dot := strings.IndexByte(mantissa, '.'); dot >= 0 {
@@ -203,29 +210,36 @@ func expandExponent(s string) string {
 		fracPart = mantissa[dot+1:]
 	}
 
-	digits := intPart + fracPart
-	if digits == "" {
+	digitsLen := len(intPart) + len(fracPart)
+	if digitsLen == 0 {
 		return s
-	}
-	for i := 0; i < len(digits); i++ {
-		if digits[i] < '0' || digits[i] > '9' {
-			return s // non-digit character in the mantissa → let udecimal reject it
-		}
 	}
 
 	// value = digits × 10^(exp - len(fracPart))
 	newExp := exp - len(fracPart)
 
-	// Size guard 2: precompute the expansion length and do not expand if it
-	// exceeds the bound.
-	// (newExp >= 0: len(digits)+newExp, newExp < 0: at most len(digits)+|newExp|+2)
+	// Size guard 2: precompute the expansion length from substring lengths and
+	// bail out BEFORE concatenating, so an oversized mantissa never triggers a
+	// large intermediate allocation.
+	// (newExp >= 0: digitsLen+newExp, newExp < 0: at most digitsLen+|newExp|+2)
 	absNewExp := newExp
 	if absNewExp < 0 {
 		absNewExp = -absNewExp
 	}
-	if len(digits)+absNewExp+2 > maxExpandedLen {
+	if digitsLen+absNewExp+2 > maxExpandedLen {
 		return s
 	}
+
+	for _, part := range [2]string{intPart, fracPart} {
+		for i := 0; i < len(part); i++ {
+			if part[i] < '0' || part[i] > '9' {
+				return s // non-digit character in the mantissa → let udecimal reject it
+			}
+		}
+	}
+
+	// Bounded by the size guard above.
+	digits := intPart + fracPart
 
 	var out string
 	if newExp >= 0 {

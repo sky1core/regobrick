@@ -182,6 +182,17 @@ result := input.a + 1`
 	// 1e100 exceeds the expansion budget: undefined instead of a huge result.
 	rs = evalModuleResult(t, module, map[string]any{"a": Number("1e100")})
 	requireUndefinedResult(t, rs)
+
+	// Plain-notation input length boundary: udecimal caps number strings at 200
+	// characters. 200 digits parse (big.Int fallback, exact), 201 are undefined.
+	d200 := strings.Repeat("9", 200)
+	rs = evalModuleResult(t, module, map[string]any{"a": Number(d200)})
+	want = "1" + strings.Repeat("0", 200) // (10^200 - 1) + 1 = 10^200
+	if got := requireSingleExprValue(t, rs).(json.Number).String(); got != want {
+		t.Fatalf("200-digit + 1: got %s, want %s", got, want)
+	}
+	rs = evalModuleResult(t, module, map[string]any{"a": Number(strings.Repeat("9", 201))})
+	requireUndefinedResult(t, rs)
 }
 
 // Pin: struct arguments/returns cross the boundary as objects keyed by their
