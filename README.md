@@ -162,8 +162,8 @@ Notes:
   - `StrictBuiltinErrors(true)`: returns `eval_builtin_error`
 - `%` (modulo) supports floating-point operands (standard OPA allows integers only)
 - Decimal arithmetic configuration is **process-global**; call `UseDecimalArithmetic(...)` **once at application startup, before any evaluation begins**
-- It mutates process-global state without synchronization, so it is **not safe to call concurrently with evaluations**
-- The documented parsing/truncation contract relies on udecimal's **default** global settings; do not call `udecimal.SetDefaultPrecision` or `udecimal.SetDefaultParseMode` elsewhere in the same process — they would silently change this contract
+- The string coercion flag is stored atomically, so a late call cannot corrupt the flag reads on the evaluation path. But `UseDecimalArithmetic` also rewrites OPA's builtin registry **without synchronization**, so calling it concurrently with evaluations is still **unsafe** — "once at startup" is the contract, not just a recommendation
+- The documented parsing/truncation contract relies on udecimal's **default** global settings, and `UseDecimalArithmetic` **checks them on entry**: it panics with `regobrick: udecimal default settings have been changed ...` if a 19-decimal-place value no longer parses, or if a 20-decimal-place value now parses (which would mean out-of-precision input is silently truncated). This is a snapshot taken at call time — calling `udecimal.SetDefaultPrecision` or `udecimal.SetDefaultParseMode` **after** `UseDecimalArithmetic` returns cannot be detected and would silently change the contract
 
 ### String Coercion (opt-in)
 

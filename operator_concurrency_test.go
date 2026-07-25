@@ -14,9 +14,9 @@ import (
 // Concurrency stress tests for the documented-safe usage pattern: configure
 // decimal arithmetic (and register builtins) once at startup, then evaluate
 // concurrently. Run under -race (as the CI test job does) these verify that
-// the evaluation read path — decimalConfig, the builtin registry, prepared
-// queries — is free of data races. Reconfiguring concurrently with evaluation
-// is documented as unsafe and is intentionally not exercised.
+// the evaluation read path — stringCoercionEnabled, the builtin registry,
+// prepared queries — is free of data races. Reconfiguring concurrently with
+// evaluation is documented as unsafe and is intentionally not exercised.
 
 func init() {
 	RegisterBuiltin2[string, int, string]("stress_repeat", func(_ rego.BuiltinContext, s string, n int) (string, error) {
@@ -85,8 +85,8 @@ result := (input.a * input.b) + (input.a / input.b)`
 }
 
 func TestConcurrentEval_StringCoercion(t *testing.T) {
-	// Coercion ON is a distinct read path of the process-global decimalConfig;
-	// the config is written once here, before any concurrent evaluation starts.
+	// Coercion ON is a distinct read path of the process-global coercion flag;
+	// the flag is written once here, before any concurrent evaluation starts.
 	enableStringCoercion(t)
 
 	module := `package test

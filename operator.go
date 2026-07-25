@@ -3,8 +3,10 @@ package regobrick
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strconv"
 	"strings"
+	"sync/atomic"
 
 	"github.com/open-policy-agent/opa/v1/ast"
 	"github.com/open-policy-agent/opa/v1/topdown"
@@ -20,7 +22,15 @@ type decimalArithmeticConfig struct {
 	stringCoercion bool
 }
 
-var decimalConfig decimalArithmeticConfig
+// stringCoercionEnabled is the process-global string coercion setting that every
+// operand conversion on the evaluation path reads.
+//
+// It is atomic so that a UseDecimalArithmetic call made after evaluation has
+// already started is a benign last-writer-wins toggle instead of a data race on
+// a plain bool, which is undefined behavior. That is the only guarantee it adds:
+// UseDecimalArithmetic also rewrites OPA's builtin registry without
+// synchronization, so reconfiguring concurrently with evaluation stays unsafe.
+var stringCoercionEnabled atomic.Bool
 
 // DecimalArithmeticOption configures UseDecimalArithmetic behavior.
 type DecimalArithmeticOption func(*decimalArithmeticConfig)
@@ -100,22 +110,71 @@ func WithStringCoercion() DecimalArithmeticOption {
 //	// With string-to-number coercion
 //	regobrick.UseDecimalArithmetic(regobrick.WithStringCoercion())
 //
-// Call this once at application startup, before any evaluation begins.
-// It mutates process-global state (OPA's builtin registry and the coercion
-// setting) without synchronization, so it is not safe to call concurrently
-// with evaluations.
+// # Concurrency
 //
-// The documented parsing/truncation contract relies on udecimal's default
-// global settings; calling udecimal.SetDefaultPrecision or
-// udecimal.SetDefaultParseMode elsewhere in the same process would silently
-// change it.
+// Call this once at application startup, before any evaluation begins.
+//
+// It writes two pieces of process-global state, with different guarantees. The
+// coercion setting is stored atomically, so a late call cannot corrupt the flag
+// reads on the evaluation path. OPA's builtin function registry, however, is
+// rewritten without synchronization. Calling this concurrently with evaluation
+// therefore remains unsafe, and "once at startup" is the contract rather than
+// just a recommendation.
+//
+// # Fail-fast on changed udecimal defaults
+//
+// The parsing contract documented above relies on udecimal's default global
+// settings. This function verifies them on entry: a 19-decimal-place value must
+// parse, and a 20-decimal-place value must fail to parse. If either check fails
+// — as it would after a udecimal.SetDefaultPrecision or
+// udecimal.SetDefaultParseMode call elsewhere in the process — it panics with a
+// message starting "regobrick: udecimal default settings have been changed",
+// rather than silently degrading precision or truncating.
+//
+// The check is a snapshot taken at call time. Changing udecimal's defaults after
+// this function returns cannot be detected, and would silently change the
+// contract.
 func UseDecimalArithmetic(opts ...DecimalArithmeticOption) {
+	assertUdecimalDefaults()
+
 	cfg := decimalArithmeticConfig{}
 	for _, opt := range opts {
 		opt(&cfg)
 	}
-	decimalConfig = cfg
+	stringCoercionEnabled.Store(cfg.stringCoercion)
 	registerDecimalBuiltins()
+}
+
+// Probe values for assertUdecimalDefaults, chosen to straddle udecimal's default
+// precision of 19 fractional digits.
+const (
+	udecimalProbeAtPrecision   = "0.0000000000000000001"  // 19 dp: must parse
+	udecimalProbeOverPrecision = "0.00000000000000000001" // 20 dp: must fail to parse
+)
+
+// assertUdecimalDefaults panics unless udecimal's process-global defaults still
+// match the parsing contract documented on UseDecimalArithmetic.
+//
+// Two probes cover the two ways that contract can be broken. A lowered
+// SetDefaultPrecision makes the 19-decimal-place probe stop parsing, silently
+// shrinking the supported range. SetDefaultParseMode(ParseModeTrunc) makes the
+// 20-decimal-place probe start parsing, silently truncating out-of-precision
+// input instead of rejecting it — the failure mode that matters most, because it
+// turns a loud parse error into a wrong number.
+func assertUdecimalDefaults() {
+	if _, err := udecimal.Parse(udecimalProbeAtPrecision); err != nil {
+		panic(fmt.Sprintf("regobrick: udecimal default settings have been changed "+
+			"(SetDefaultPrecision/SetDefaultParseMode?): parsing %q, whose 19 decimal "+
+			"places the documented contract requires to be supported, failed with %v",
+			udecimalProbeAtPrecision, err))
+	}
+	if _, err := udecimal.Parse(udecimalProbeOverPrecision); err == nil {
+		panic(fmt.Sprintf("regobrick: udecimal default settings have been changed "+
+			"(SetDefaultPrecision/SetDefaultParseMode?): parsing %q, whose 20 decimal "+
+			"places exceed the documented 19-place limit, succeeded instead of failing, "+
+			"so out-of-precision values would be silently truncated",
+			udecimalProbeOverPrecision))
+	}
 }
 
 func registerDecimalBuiltins() {
@@ -294,7 +353,7 @@ func isNumericType(v ast.Value) bool {
 	case ast.Number:
 		return true
 	case ast.String:
-		if !decimalConfig.stringCoercion {
+		if !stringCoercionEnabled.Load() {
 			return false
 		}
 		_, ok := toDecimal(v)
@@ -317,7 +376,7 @@ func operandToDecimal(v ast.Value, pos int) (udecimal.Decimal, error) {
 		}
 		return d, nil
 	case ast.String:
-		if !decimalConfig.stringCoercion {
+		if !stringCoercionEnabled.Load() {
 			return udecimal.Decimal{}, builtins.NewOperandTypeErr(pos, v, "number")
 		}
 		d, err := parseDecimal(string(val))
@@ -342,7 +401,7 @@ func elementToDecimal(container ast.Value, elem *ast.Term) (udecimal.Decimal, er
 		}
 		return d, nil
 	case ast.String:
-		if !decimalConfig.stringCoercion {
+		if !stringCoercionEnabled.Load() {
 			return udecimal.Decimal{}, builtins.NewOperandElementErr(1, container, elem.Value, "number")
 		}
 		d, err := parseDecimal(string(val))
@@ -814,7 +873,7 @@ func (s *extremaScan) step(x *ast.Term) bool {
 		}
 		d = parsed
 	case ast.String:
-		if !decimalConfig.stringCoercion {
+		if !stringCoercionEnabled.Load() {
 			s.useCompare = true
 			return true
 		}
