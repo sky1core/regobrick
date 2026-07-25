@@ -1,5 +1,3 @@
-// Package regobrick provides high-level functions for applying RegoBrick
-// transformations and adding modules to OPA rego.Rego objects.
 package regobrick
 
 import (

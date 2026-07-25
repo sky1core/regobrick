@@ -125,6 +125,11 @@ func RegisterBuiltin0_(name string, fn func(rego.BuiltinContext) error, opts ...
 // RegisterBuiltin1_ registers a builtin with 1 argument that returns only an error (null to Rego).
 // Must be called during package initialization (init function).
 // Calling after initialization may cause race conditions.
+//
+// For how argument types map to Rego types, and which Rego values cannot be
+// converted, see the package documentation: "Custom builtin type conversion"
+// and "Custom builtin conversion limits". The same rules apply to every
+// RegisterBuiltinX_ arity.
 func RegisterBuiltin1_[T1 any](name string, fn func(rego.BuiltinContext, T1) error, opts ...BuiltinRegisterOption) {
 	cfg := builtinRegisterConfig{}
 	for _, opt := range opts {
@@ -265,6 +270,11 @@ func RegisterBuiltin0[R any](name string, fn func(rego.BuiltinContext) (R, error
 // RegisterBuiltin1 registers a builtin with 1 argument.
 // Must be called during package initialization (init function).
 // Calling after initialization may cause race conditions.
+//
+// For how argument and return types map to Rego types, and which Rego values
+// cannot be converted, see the package documentation: "Custom builtin type
+// conversion" and "Custom builtin conversion limits". The same rules apply to
+// every RegisterBuiltinX arity.
 func RegisterBuiltin1[T1 any, R any](name string, fn func(rego.BuiltinContext, T1) (R, error), opts ...BuiltinRegisterOption) {
 	cfg := builtinRegisterConfig{}
 	for _, opt := range opts {
