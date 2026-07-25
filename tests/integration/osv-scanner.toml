@@ -1,7 +1,8 @@
 # OSV-Scanner triage for the integration-test module.
 #
-# All entries below are Moby DAEMON-side vulnerabilities reported against the
-# monolithic github.com/docker/docker module, which this test-only module pulls
+# The five github.com/docker/docker entries below are Moby DAEMON-side
+# vulnerabilities reported against the monolithic docker/docker module, which
+# this test-only module pulls
 # in solely for its Docker API CLIENT (via testcontainers-go). The daemon code
 # is never linked into any execution path here: govulncheck (call-graph
 # analysis, run with -tags integration) reports zero reachable vulnerabilities.
@@ -36,3 +37,14 @@ reason = "Daemon-side (docker cp race, arbitrary empty file creation); client-on
 [[IgnoredVulns]]
 id = "GO-2026-5746"
 reason = "Daemon-side (containers archive endpoint executes container binary on host); client-only usage, unreachable per govulncheck; fix only in unreachable v2.0.0-beta line"
+
+# GO-2026-5932 flags golang.org/x/crypto/openpgp as unmaintained/unsafe by
+# design. It covers every x/crypto version (introduced: 0) and has no fixed
+# version, so a dependency bump cannot clear it. Nothing in this module or its
+# call graph imports any openpgp package: govulncheck (-tags integration)
+# reports zero reachable vulnerabilities, and the module source contains no
+# openpgp reference. The ignore is per-ID; other x/crypto advisories still
+# fail the scan.
+[[IgnoredVulns]]
+id = "GO-2026-5932"
+reason = "x/crypto/openpgp unmaintained-package advisory; no openpgp import anywhere in this module's call graph (unreachable per govulncheck); advisory spans all versions with no fixed release, so no bump can resolve it"
