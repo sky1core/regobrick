@@ -271,6 +271,26 @@ Below, **Decimal** = `UseDecimalArithmetic()`, **+Coercion** = `UseDecimalArithm
 
 > **Note:** Standard OPA's comparison operators (`>`, `<`, `>=`, `<=`) support all types using type ordering (`null < bool < number < string < ...`). With `UseDecimalArithmetic`, comparison operators become **numeric-only** — non-number comparisons like `"a" < "b"` or `"hello" > 123` result in undefined. With `WithStringCoercion()`, numeric strings are additionally accepted as numbers.
 
+### Performance
+
+Perhaps counterintuitively, `UseDecimalArithmetic()` is **faster** than standard
+OPA on numeric workloads, not slower. Standard OPA evaluates non-integer
+arithmetic on heap-allocated arbitrary-precision `big.Float` values, while
+regobrick uses udecimal's fixed-width uint128 representation, which parses and
+computes on the stack within the magnitude fast path described above (larger
+values fall back to exact `big.Int` arithmetic).
+
+On numeric-heavy benchmark policies (Apple M1 Max, Go 1.26.5, OPA v1.11.0),
+decimal mode measured **1.4×–5.4× faster** than standard OPA (geomean −57%
+evaluation time) with 26–90% fewer heap allocations. `WithStringCoercion()`
+adds little on top: within measurement noise for most scenarios, up to ~17% on
+`max`/`min`-heavy aggregates.
+
+The gains come from the numeric hot path, so policies dominated by evaluator
+overhead rather than arithmetic see smaller improvements (1.4× on a
+single-comparison guard policy). Full results, methodology, and reproduction
+commands: [internal/bench/README.md](internal/bench/README.md).
+
 ## Writing Custom Builtins
 
 You can register a custom function that OPA calls within your policies. RegoBrick provides helper functions (like `RegisterBuiltin1`, `RegisterBuiltin2`, etc.) for builtins that accept typed Go arguments and return typed Go values.

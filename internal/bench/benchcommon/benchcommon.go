@@ -4,11 +4,14 @@
 // The two modes must live in separate test binaries because
 // UseDecimalArithmetic mutates OPA's process-global builtin registry and cannot
 // be undone. Identical benchmark names across the two packages allow direct
-// comparison, e.g.:
+// comparison; strip the differing "pkg:" lines so benchstat pairs the rows
+// instead of grouping them by package:
 //
-//	go test -bench . -count 10 ./internal/bench/standard > standard.txt
-//	go test -bench . -count 10 ./internal/bench/decimal > decimal.txt
+//	go test -bench . -count 6 ./internal/bench/standard | grep -v '^pkg:' > standard.txt
+//	go test -bench . -count 6 ./internal/bench/decimal | grep -v '^pkg:' > decimal.txt
 //	benchstat standard.txt decimal.txt
+//
+// Measured results and full methodology: internal/bench/README.md.
 package benchcommon
 
 import (
