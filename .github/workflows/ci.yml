@@ -75,8 +75,12 @@ jobs:
     # Lockfile-level dependency scans over both modules. Complements the
     # govulncheck job (call-graph based): these fail on any known-vulnerable
     # dependency version regardless of reachability, and consume the triage
-    # files (tests/integration/osv-scanner.toml, .trivyignore) so documented
-    # ignore decisions apply in CI exactly as they do in local pre-push hooks.
+    # files (osv-scanner.toml, tests/integration/osv-scanner.toml, .trivyignore)
+    # so documented ignore decisions apply in CI exactly as they do in local
+    # pre-push hooks. osv-scanner's embedded call analysis is disabled: it is
+    # redundant with the govulncheck job, and it cannot analyze the build-tag
+    # gated integration module (no matching packages), which makes the step
+    # exit non-zero even with zero findings.
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -84,7 +88,7 @@ jobs:
         with:
           go-version-file: go.mod
       - run: go install github.com/google/osv-scanner/v2/cmd/osv-scanner@v2.4.0
-      - run: osv-scanner scan source --allow-no-lockfiles -r .
+      - run: osv-scanner scan source --allow-no-lockfiles --no-call-analysis=go -r .
       - run: curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/75c4dc0f45c5d7ffd05ae26df1e0c666787bdf2a/contrib/install.sh | sh -s -- -b "$HOME/.local/bin" v0.69.3
       - run: $HOME/.local/bin/trivy fs --scanners vuln --severity HIGH,CRITICAL --exit-code 1 --no-progress go.mod
       - run: $HOME/.local/bin/trivy fs --scanners vuln --severity HIGH,CRITICAL --exit-code 1 --no-progress tests/integration/go.mod

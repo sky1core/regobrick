@@ -1,0 +1,12 @@
+# OSV-Scanner triage for the root regobrick module.
+#
+# GO-2026-5932 flags golang.org/x/crypto/openpgp as unmaintained/unsafe by
+# design. x/crypto is an indirect dependency here, and no openpgp package is
+# in this module's compile set (go list -deps -test ./... matches zero openpgp
+# packages). The advisory covers every x/crypto version (introduced: 0) and
+# has no fixed release, so a dependency bump cannot clear it. The ignore is
+# per-ID; any other x/crypto advisory still fails the scan.
+
+[[IgnoredVulns]]
+id = "GO-2026-5932"
+reason = "x/crypto/openpgp unmaintained-package advisory; no openpgp package in this module's compile set; advisory spans all versions with no fixed release, so no bump can resolve it"
