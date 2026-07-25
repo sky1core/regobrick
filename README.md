@@ -281,13 +281,15 @@ computes on the stack within the magnitude fast path described above (larger
 values fall back to exact `big.Int` arithmetic).
 
 On numeric-heavy benchmark policies (Apple M1 Max, Go 1.26.5, OPA v1.11.0),
-decimal mode measured **1.4×–5.4× faster** than standard OPA (geomean −57%
+decimal mode measured **1.26×–5.7× faster** than standard OPA (geomean −59%
 evaluation time) with 26–90% fewer heap allocations. `WithStringCoercion()`
-adds little on top: within measurement noise for most scenarios, up to ~17% on
-`max`/`min`-heavy aggregates.
+adds no measurable cost on those policies: with the same values supplied as
+JSON strings, no scenario measured slower than its numeric-input counterpart.
+The largest gap was −7.9% on aggregates, which is not attributable to the
+coercion path — the two runs evaluate different input documents.
 
 The gains come from the numeric hot path, so policies dominated by evaluator
-overhead rather than arithmetic see smaller improvements (1.4× on a
+overhead rather than arithmetic see smaller improvements (1.26× on a
 single-comparison guard policy). Full results, methodology, and reproduction
 commands: [internal/bench/README.md](internal/bench/README.md).
 

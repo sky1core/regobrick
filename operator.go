@@ -375,8 +375,11 @@ func numberResult(d udecimal.Decimal, iter func(*ast.Term) error) error {
 }
 
 // boolResult converts a bool result into an ast.Term.
+// The two boolean terms are interned, so this allocates nothing — the same
+// approach OPA's own comparison builtins take
+// (OPA v1.11.0 topdown/comparison.go: iter(ast.InternedTerm(...))).
 func boolResult(b bool, iter func(*ast.Term) error) error {
-	return iter(ast.BooleanTerm(b))
+	return iter(ast.InternedTerm(b))
 }
 
 // === Arithmetic operations ===
@@ -677,200 +680,184 @@ func precisionProduct(_ topdown.BuiltinContext, operands []*ast.Term, iter func(
 	return numberResult(product, iter)
 }
 
-// shouldUseNumericExtrema reports whether max/min should use precise numeric
-// comparison. Numeric mode is used only when every element is numeric-like;
-// otherwise the callers fall back to the default ast.Compare ordering, matching
-// standard OPA (e.g. max(["apple","banana"]) == "banana", max([1,"2",true])
-// resolves via type ordering).
-//
-// "numeric-like" is decided by isNumericType: ast.Number always qualifies, and
-// ast.String qualifies only when WithStringCoercion() is enabled and the string
-// parses as a number. This makes the fallback policy identical whether or not
-// coercion is enabled.
-func shouldUseNumericExtrema(foreach func(func(*ast.Term))) bool {
-	allNumericLike := true
-	foreach(func(x *ast.Term) {
-		if !isNumericType(x.Value) {
-			allNumericLike = false
-		}
-	})
-	return allNumericLike
-}
+// extremaDir selects which end of the ordering max/min keep. Scaling a
+// comparison result by the direction lets a single scan serve both operators.
+type extremaDir int
+
+const (
+	extremaMax extremaDir = 1
+	extremaMin extremaDir = -1
+)
 
 func precisionMax(_ topdown.BuiltinContext, operands []*ast.Term, iter func(*ast.Term) error) error {
-	switch a := operands[0].Value.(type) {
-	case *ast.Array:
-		if a.Len() == 0 {
-			return nil
-		}
-		useNumeric := shouldUseNumericExtrema(func(fn func(*ast.Term)) {
-			a.Foreach(fn)
-		})
-		if !useNumeric {
-			// Use the default comparison when a non-numeric element is present.
-			max := a.Elem(0).Value
-			a.Foreach(func(x *ast.Term) {
-				if ast.Compare(max, x.Value) < 0 {
-					max = x.Value
-				}
-			})
-			return iter(ast.NewTerm(max))
-		}
-		// Precise comparison when all elements are numeric.
-		var maxVal udecimal.Decimal
-		var maxTerm *ast.Term
-		var numericErr error
-		first := true
-		a.Foreach(func(x *ast.Term) {
-			if numericErr != nil {
-				return
-			}
-			d, parseErr := elementToDecimal(a, x)
-			if parseErr != nil {
-				numericErr = parseErr
-				return
-			}
-			if first || d.Cmp(maxVal) > 0 {
-				maxVal = d
-				maxTerm = x
-				first = false
-			}
-		})
-		if numericErr != nil {
-			return numericErr
-		}
-		return iter(maxTerm)
-	case ast.Set:
-		if a.Len() == 0 {
-			return nil
-		}
-		useNumeric := shouldUseNumericExtrema(func(fn func(*ast.Term)) {
-			a.Foreach(fn)
-		})
-		if !useNumeric {
-			// Use the default comparison when a non-numeric element is present.
-			var max ast.Value
-			a.Foreach(func(x *ast.Term) {
-				if max == nil || ast.Compare(max, x.Value) < 0 {
-					max = x.Value
-				}
-			})
-			return iter(ast.NewTerm(max))
-		}
-		// Precise comparison when all elements are numeric.
-		var maxVal udecimal.Decimal
-		var maxTerm *ast.Term
-		var numericErr error
-		first := true
-		a.Foreach(func(x *ast.Term) {
-			if numericErr != nil {
-				return
-			}
-			d, parseErr := elementToDecimal(a, x)
-			if parseErr != nil {
-				numericErr = parseErr
-				return
-			}
-			if first || d.Cmp(maxVal) > 0 {
-				maxVal = d
-				maxTerm = x
-				first = false
-			}
-		})
-		if numericErr != nil {
-			return numericErr
-		}
-		return iter(maxTerm)
-	default:
-		return builtins.NewOperandTypeErr(1, operands[0].Value, "set", "array")
-	}
+	return precisionExtrema(operands[0].Value, extremaMax, iter)
 }
 
 func precisionMin(_ topdown.BuiltinContext, operands []*ast.Term, iter func(*ast.Term) error) error {
-	switch a := operands[0].Value.(type) {
+	return precisionExtrema(operands[0].Value, extremaMin, iter)
+}
+
+// precisionExtrema implements max/min over an array or set operand.
+//
+// Precise numeric comparison is used only when EVERY element is numeric-like:
+// an ast.Number always qualifies (even one that fails to parse), an ast.String
+// only when WithStringCoercion() is enabled and the string parses as a number.
+// Any other element makes the whole collection fall back to the default
+// ast.Compare ordering, matching standard OPA (e.g. max(["apple","banana"]) ==
+// "banana", max([1,"2",true]) resolves via type ordering). The fallback policy
+// is therefore identical whether or not coercion is enabled.
+//
+// Each operand type gets its own driver rather than a shared iteration
+// interface: the per-element logic is shared through extremaScan, while
+// iterating an array by index keeps the scan state on the stack, which a
+// callback passed to an interface method would not.
+func precisionExtrema(operand ast.Value, dir extremaDir, iter func(*ast.Term) error) error {
+	switch c := operand.(type) {
 	case *ast.Array:
-		if a.Len() == 0 {
-			return nil
-		}
-		useNumeric := shouldUseNumericExtrema(func(fn func(*ast.Term)) {
-			a.Foreach(fn)
-		})
-		if !useNumeric {
-			// Use the default comparison when a non-numeric element is present.
-			min := a.Elem(0).Value
-			a.Foreach(func(x *ast.Term) {
-				if ast.Compare(min, x.Value) > 0 {
-					min = x.Value
-				}
-			})
-			return iter(ast.NewTerm(min))
-		}
-		// Precise comparison when all elements are numeric.
-		var minVal udecimal.Decimal
-		var minTerm *ast.Term
-		var numericErr error
-		first := true
-		a.Foreach(func(x *ast.Term) {
-			if numericErr != nil {
-				return
-			}
-			d, parseErr := elementToDecimal(a, x)
-			if parseErr != nil {
-				numericErr = parseErr
-				return
-			}
-			if first || d.Cmp(minVal) < 0 {
-				minVal = d
-				minTerm = x
-				first = false
-			}
-		})
-		if numericErr != nil {
-			return numericErr
-		}
-		return iter(minTerm)
+		return arrayExtrema(c, dir, iter)
 	case ast.Set:
-		if a.Len() == 0 {
-			return nil
-		}
-		useNumeric := shouldUseNumericExtrema(func(fn func(*ast.Term)) {
-			a.Foreach(fn)
-		})
-		if !useNumeric {
-			// Use the default comparison when a non-numeric element is present.
-			var min ast.Value
-			a.Foreach(func(x *ast.Term) {
-				if min == nil || ast.Compare(min, x.Value) > 0 {
-					min = x.Value
-				}
-			})
-			return iter(ast.NewTerm(min))
-		}
-		// Precise comparison when all elements are numeric.
-		var minVal udecimal.Decimal
-		var minTerm *ast.Term
-		var numericErr error
-		first := true
-		a.Foreach(func(x *ast.Term) {
-			if numericErr != nil {
-				return
-			}
-			d, parseErr := elementToDecimal(a, x)
-			if parseErr != nil {
-				numericErr = parseErr
-				return
-			}
-			if first || d.Cmp(minVal) < 0 {
-				minVal = d
-				minTerm = x
-				first = false
-			}
-		})
-		if numericErr != nil {
-			return numericErr
-		}
-		return iter(minTerm)
+		return setExtrema(c, dir, iter)
 	default:
-		return builtins.NewOperandTypeErr(1, operands[0].Value, "set", "array")
+		return builtins.NewOperandTypeErr(1, operand, "set", "array")
 	}
+}
+
+func arrayExtrema(a *ast.Array, dir extremaDir, iter func(*ast.Term) error) error {
+	n := a.Len()
+	if n == 0 {
+		// max/min of an empty collection is undefined.
+		return nil
+	}
+
+	scan := extremaScan{dir: dir}
+	for i := 0; i < n; i++ {
+		if scan.step(a.Elem(i)) {
+			break
+		}
+	}
+	if !scan.useCompare {
+		return scan.result(iter)
+	}
+
+	var best ast.Value
+	for i := 0; i < n; i++ {
+		best = pickByCompare(best, a.Elem(i).Value, dir)
+	}
+	return iter(ast.NewTerm(best))
+}
+
+// setExtrema mirrors arrayExtrema. ast.Set exposes iteration only through
+// callbacks, so unlike the array driver its scan state does escape to the heap.
+func setExtrema(s ast.Set, dir extremaDir, iter func(*ast.Term) error) error {
+	if s.Len() == 0 {
+		return nil
+	}
+
+	scan := extremaScan{dir: dir}
+	s.Until(scan.step)
+	if !scan.useCompare {
+		return scan.result(iter)
+	}
+
+	var best ast.Value
+	s.Foreach(func(x *ast.Term) {
+		best = pickByCompare(best, x.Value, dir)
+	})
+	return iter(ast.NewTerm(best))
+}
+
+// extremaScan folds a collection into a running max/min, parsing each element
+// exactly once.
+//
+// The trade-off of parsing while classifying: a collection whose only
+// non-numeric-like element sits at the end (e.g. max([1000 numbers…, "abc"]))
+// parses every element before learning that the fallback ordering applies and
+// that none of that work was needed. Deciding numeric-likeness first instead
+// would skip those parses, but at the cost of parsing every string twice on
+// the common numeric path.
+//
+// A parse failure on an ast.Number does not end the scan, because the remaining
+// elements still decide whether the collection is numeric-only. The error is
+// held until the scan completes: returned as-is if every element turned out to
+// be numeric-like (so it surfaces as eval_builtin_error), dropped if the
+// collection needs the fallback ordering instead. That is what separates
+// max([1e-25, 2]), an error, from max([1e-25, {}]), which is not.
+type extremaScan struct {
+	dir        extremaDir
+	bestTerm   *ast.Term
+	bestVal    udecimal.Decimal
+	pendingErr error
+	useCompare bool
+}
+
+// step folds one element into the scan and reports whether the caller can stop
+// iterating, which it can as soon as the collection is known not to be
+// numeric-only.
+func (s *extremaScan) step(x *ast.Term) bool {
+	var d udecimal.Decimal
+
+	switch v := x.Value.(type) {
+	case ast.Number:
+		if s.pendingErr != nil {
+			// A Number is numeric-like whether or not it parses and only the
+			// first parse failure is reported, so this element cannot change the
+			// outcome any more.
+			return false
+		}
+		parsed, err := parseDecimal(string(v))
+		if err != nil {
+			// Held rather than returned: a later non-numeric-like element would
+			// switch the call to the fallback ordering, which never converts this
+			// element and so never fails on it.
+			s.pendingErr = err
+			return false
+		}
+		d = parsed
+	case ast.String:
+		if !decimalConfig.stringCoercion {
+			s.useCompare = true
+			return true
+		}
+		parsed, err := parseDecimal(string(v))
+		if err != nil {
+			// Not numeric-like: the collection is ordered by ast.Compare.
+			s.useCompare = true
+			return true
+		}
+		if s.pendingErr != nil {
+			return false
+		}
+		d = parsed
+	default:
+		s.useCompare = true
+		return true
+	}
+
+	// max keeps a candidate comparing greater than the best so far, min one
+	// comparing smaller. Ties keep the element met first, which is what
+	// preserves its exact term representation ("1.0" vs "1").
+	if s.bestTerm == nil || d.Cmp(s.bestVal)*int(s.dir) > 0 {
+		s.bestVal, s.bestTerm = d, x
+	}
+	return false
+}
+
+// result yields the numeric extremum the scan settled on. Only valid once the
+// scan has run without requiring the fallback ordering.
+func (s *extremaScan) result(iter func(*ast.Term) error) error {
+	if s.pendingErr != nil {
+		return s.pendingErr
+	}
+	return iter(s.bestTerm)
+}
+
+// pickByCompare folds one element into an extremum taken under OPA's default
+// value ordering, the fallback for collections that are not numeric-only.
+func pickByCompare(best, candidate ast.Value, dir extremaDir) ast.Value {
+	// max replaces the best when it compares less than the candidate, min when
+	// it compares greater. Ties keep the element met first.
+	if best == nil || ast.Compare(best, candidate)*int(dir) < 0 {
+		return candidate
+	}
+	return best
 }

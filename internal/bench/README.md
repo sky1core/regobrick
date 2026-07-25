@@ -39,7 +39,10 @@ not results.
 
 ## Environment
 
-Measured 2026-07-25:
+Measured 2026-07-25, re-measured the same day after the single-pass `max`/`min`
+scan. All four runs below were taken back to back in one session; an earlier
+session that day measured ~28% slower on identical unmodified code, so figures
+from different sessions must never be compared against each other:
 
 | | |
 |---|---|
@@ -61,23 +64,23 @@ Time per evaluation (`sec/op`):
 
 | Benchmark | Standard OPA | Decimal | Δ time | Speedup |
 |---|---|---|---|---|
-| ArithSum1000 | 4.804 ms ± 13% | 2.709 ms ± 9% | −43.6% | 1.8× |
-| CompareFilter1000 | 3.316 ms ± 7% | 1.582 ms ± 5% | −52.3% | 2.1× |
-| Aggregates1000 | 4.485 ms ± 2% | 0.826 ms ± 7% | −81.6% | 5.4× |
-| DivSum1000 | 6.573 ms ± 5% | 2.831 ms ± 6% | −56.9% | 2.3× |
-| ScalarGuard | 20.64 µs ± 6% | 14.83 µs ± 12% | −28.1% | 1.4× |
-| **geomean** | 1.575 ms | 682.9 µs | **−56.6%** | **2.3×** |
+| ArithSum1000 | 4.102 ms ± 1% | 1.813 ms ± 1% | −55.8% | 2.3× |
+| CompareFilter1000 | 2.395 ms ± 0% | 1.035 ms ± 1% | −56.8% | 2.3× |
+| Aggregates1000 | 3.010 ms ± 0% | 528.9 µs ± 1% | −82.4% | 5.7× |
+| DivSum1000 | 4.370 ms ± 0% | 1.880 ms ± 1% | −57.0% | 2.3× |
+| ScalarGuard | 14.59 µs ± 1% | 11.62 µs ± 2% | −20.3% | 1.26× |
+| **geomean** | 1.135 ms | 464.8 µs | **−59.1%** | **2.4×** |
 
 Heap allocations (`allocs/op`; bytes allocated shrink similarly, geomean
-−63.1%):
+−63.4%):
 
 | Benchmark | Standard OPA | Decimal | Δ allocs |
 |---|---|---|---|
 | ArithSum1000 | 65.7k | 19.7k | −70.0% |
-| CompareFilter1000 | 42.2k | 15.2k | −64.0% |
+| CompareFilter1000 | 42.2k | 14.2k | −66.4% |
 | Aggregates1000 | 62.2k | 6.2k | −90.0% |
 | DivSum1000 | 63.7k | 19.7k | −69.1% |
-| ScalarGuard | 228 | 168 | −26.3% |
+| ScalarGuard | 228 | 167 | −26.8% |
 
 ### Why decimal mode is faster
 
@@ -92,8 +95,16 @@ zero-allocation. Values beyond the u128 coefficient range fall back to exact
 Replacing arbitrary-precision software arithmetic with fixed-width software
 arithmetic is what yields both the precision contract and the speedup.
 
+Two operator-level details shape the allocation columns. Comparison operators
+return one of OPA's two interned boolean terms, so producing a comparison
+result allocates nothing. `max`/`min` over a numeric collection parse each
+element exactly once in a single scan, and for an array operand that scan runs
+on stack-resident state, so it allocates nothing per element either. (A
+collection that is not numeric-only is re-scanned under the default ordering,
+which is the slower path.)
+
 The gain scales with how numeric-heavy the policy is. `ScalarGuard` (one
-multiply and one compare per evaluation) improves only 1.4× because evaluator
+multiply and one compare per evaluation) improves only 1.26× because evaluator
 overhead, not arithmetic, dominates its runtime.
 
 ## String coercion overhead
@@ -103,17 +114,27 @@ converted on the per-element hot path by `WithStringCoercion()`):
 
 | Benchmark | Decimal, numeric input | +Coercion, string input | Δ time |
 |---|---|---|---|
-| ArithSum1000 | 2.709 ms | 2.664 ms | −1.7% (p=0.015) |
-| CompareFilter1000 | 1.582 ms | 1.741 ms | ~ (p=0.310) |
-| Aggregates1000 | 825.5 µs | 968.8 µs | +17.4% |
-| DivSum1000 | 2.831 ms | 2.887 ms | ~ (p=0.937) |
-| ScalarGuard | 14.83 µs | 15.53 µs | ~ (p=0.093) |
-| **geomean** | 682.9 µs | 725.9 µs | **+6.3%** |
+| ArithSum1000 | 1.813 ms | 1.779 ms | −1.9% |
+| CompareFilter1000 | 1.035 ms | 1.004 ms | −3.0% |
+| Aggregates1000 | 528.9 µs | 487.3 µs | −7.9% |
+| DivSum1000 | 1.880 ms | 1.850 ms | −1.6% |
+| ScalarGuard | 11.62 µs | 11.49 µs | −1.2% (p=0.026) |
+| **geomean** | 464.8 µs | 450.2 µs | **−3.1%** |
 
-Coercion is within measurement noise for most scenarios. The one significant
-regression is `Aggregates1000` (+17.4%): `max`/`min` first scan the collection
-to decide whether every element is numeric-like, then parse the elements again
-for comparison, so string elements are parsed twice.
+Allocation counts are identical between the two modes; string inputs allocate
+0.2–1.7% more bytes.
+
+No scenario shows coercion overhead any more. Read the negative deltas as "no
+measurable cost", not as a speedup from coercion: the two runs evaluate
+different input documents (string terms vs number terms), so their remaining
+gap is not attributable to the coercion path.
+
+`Aggregates1000` used to be the one scenario with a real coercion penalty
+(+17.4%), because `max`/`min` first scanned the collection to decide whether
+every element was numeric-like and then parsed the elements again to compare
+them — parsing every string twice. The scan now parses each element once and
+falls back to `ast.Compare` ordering only after meeting an element that is not
+numeric-like, which removed the penalty.
 
 ## Operator micro-benchmarks
 
@@ -122,14 +143,18 @@ Direct builtin-function cost without rego evaluation overhead
 
 | Benchmark | ns/op | allocs/op |
 |---|---|---|
-| ExpandExponent_Plain | 27.6 | 0 |
-| ExpandExponent_Exponent | 101.9 | 1 |
-| ParseDecimal_Plain | 32.9 | 0 |
-| ParseDecimal_Exponent | 128.8 | 1 |
-| PrecisionPlus | 225.0 | 3 |
-| PrecisionMultiply | 235.7 | 3 |
-| PrecisionDivide | 258.2 | 3 |
-| PrecisionLT | 158.7 | 1 |
+| ExpandExponent_Plain | 22.7 | 0 |
+| ExpandExponent_Exponent | 77.6 | 1 |
+| ParseDecimal_Plain | 24.0 | 0 |
+| ParseDecimal_Exponent | 95.5 | 1 |
+| PrecisionPlus | 159.7 | 3 |
+| PrecisionMultiply | 168.8 | 3 |
+| PrecisionDivide | 184.2 | 3 |
+| PrecisionLT | 92.7 | 0 |
+
+`PrecisionLT` allocates nothing: the comparison result is an interned boolean
+term, and both operands parse without allocating. The arithmetic operators
+allocate for their result number instead.
 
 ## Reproducing
 

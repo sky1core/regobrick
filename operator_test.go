@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -599,6 +600,187 @@ func TestDecimalOperators_Max_NumericElementParseError(t *testing.T) {
 			t.Fatalf("expected %s, got %s (%v)", topdown.BuiltinErr, topdownErr.Code, err)
 		}
 	})
+}
+
+// TestDecimalOperators_MaxMin_NumericParseErrorAnyPosition extends the previous
+// test across the whole numeric-mode surface: the out-of-precision Number is
+// reported wherever it sits in the collection, for min as well as max, and for
+// sets as well as arrays.
+func TestDecimalOperators_MaxMin_NumericParseErrorAnyPosition(t *testing.T) {
+	ensureDecimalArithmeticEnabled()
+
+	const (
+		arrayMax = "package test\nimport rego.v1\nresult := max(input.arr)"
+		arrayMin = "package test\nimport rego.v1\nresult := min(input.arr)"
+		setMax   = "package test\nimport rego.v1\nresult := max({x | some x in input.arr})"
+		setMin   = "package test\nimport rego.v1\nresult := min({x | some x in input.arr})"
+	)
+
+	badNum := Number("1e-25")
+	first := []interface{}{badNum, 1}
+	last := []interface{}{1, badNum}
+
+	tests := []struct {
+		name   string
+		module string
+		arr    []interface{}
+	}{
+		{"array_max_first", arrayMax, first},
+		{"array_max_last", arrayMax, last},
+		{"array_min_first", arrayMin, first},
+		{"array_min_last", arrayMin, last},
+		{"set_max", setMax, first},
+		{"set_min", setMin, first},
+	}
+
+	for _, tt := range tests {
+		input := map[string]interface{}{"arr": tt.arr}
+
+		t.Run(tt.name+"_default_undefined", func(t *testing.T) {
+			rs := evalModuleResult(t, tt.module, input)
+			requireUndefinedResult(t, rs)
+		})
+
+		t.Run(tt.name+"_strict_error", func(t *testing.T) {
+			_, err := evalModule(t, tt.module, input, rego.StrictBuiltinErrors(true))
+			if err == nil {
+				t.Fatal("expected eval error for out-of-precision element, got nil")
+			}
+			var topdownErr *topdown.Error
+			if !errors.As(err, &topdownErr) {
+				t.Fatalf("expected topdown.Error, got %T: %v", err, err)
+			}
+			if topdownErr.Code != topdown.BuiltinErr {
+				t.Fatalf("expected %s, got %s (%v)", topdown.BuiltinErr, topdownErr.Code, err)
+			}
+		})
+	}
+}
+
+// TestDecimalOperators_MaxMin_FirstParseErrorWins pins WHICH parse error is
+// reported when a numeric-only collection holds more than one unparsable
+// Number: the one met first in iteration order, not the last. The two failures
+// are told apart by their messages, because they fail for different reasons —
+// "1e-25" exceeds udecimal's 19-decimal-place precision, while "1e100" exceeds
+// the exponent expansion budget and is rejected as a malformed number.
+//
+// For arrays iteration order is element order, so reversing the elements
+// reverses the reported error. For sets it is OPA's sorted order, in which
+// 1e-25 precedes 1e100, so both source orders report the same error.
+func TestDecimalOperators_MaxMin_FirstParseErrorWins(t *testing.T) {
+	ensureDecimalArithmeticEnabled()
+
+	const (
+		precisionErr = "precision out of range"
+		formatErr    = "invalid format"
+	)
+
+	const (
+		arrayMax = "package test\nimport rego.v1\nresult := max(input.arr)"
+		arrayMin = "package test\nimport rego.v1\nresult := min(input.arr)"
+		setMax   = "package test\nimport rego.v1\nresult := max({x | some x in input.arr})"
+		setMin   = "package test\nimport rego.v1\nresult := min({x | some x in input.arr})"
+	)
+
+	precisionFirst := []interface{}{Number("1e-25"), Number("1e100")}
+	formatFirst := []interface{}{Number("1e100"), Number("1e-25")}
+
+	tests := []struct {
+		name   string
+		module string
+		arr    []interface{}
+		want   string
+		unwant string
+	}{
+		{"array_max_precision_first", arrayMax, precisionFirst, precisionErr, formatErr},
+		{"array_max_format_first", arrayMax, formatFirst, formatErr, precisionErr},
+		{"array_min_precision_first", arrayMin, precisionFirst, precisionErr, formatErr},
+		{"array_min_format_first", arrayMin, formatFirst, formatErr, precisionErr},
+		// Sorted set order decides, so the source order is irrelevant here.
+		{"set_max_sorted_order", setMax, precisionFirst, precisionErr, formatErr},
+		{"set_max_sorted_order_reversed_source", setMax, formatFirst, precisionErr, formatErr},
+		{"set_min_sorted_order", setMin, precisionFirst, precisionErr, formatErr},
+		{"set_min_sorted_order_reversed_source", setMin, formatFirst, precisionErr, formatErr},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			input := map[string]interface{}{"arr": tt.arr}
+
+			_, err := evalModule(t, tt.module, input, rego.StrictBuiltinErrors(true))
+			if err == nil {
+				t.Fatal("expected eval error for unparsable elements, got nil")
+			}
+			if !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("expected the error of the first unparsable element (%q), got %v", tt.want, err)
+			}
+			if strings.Contains(err.Error(), tt.unwant) {
+				t.Fatalf("expected the later element's error (%q) to be discarded, got %v", tt.unwant, err)
+			}
+		})
+	}
+}
+
+// TestDecimalOperators_MaxMin_UnparsableNumberWithNonNumericElement pins the
+// boundary between the two failure modes of an out-of-precision Number in
+// max/min:
+//
+//   - max([1e-25, 2]): every element is numeric-like, numeric mode applies, and
+//     the Number's parse error surfaces (the test above).
+//   - max([1e-25, {}]): the object is not numeric-like, so the collection is
+//     ordered by the default ast.Compare fallback instead and the unparsable
+//     Number is never converted — a defined result and no error, even under
+//     StrictBuiltinErrors(true).
+//
+// The element order is varied because the collection is scanned in iteration
+// order: the non-numeric element can be met before or after the unparsable one,
+// and neither order may turn the fallback into an error.
+func TestDecimalOperators_MaxMin_UnparsableNumberWithNonNumericElement(t *testing.T) {
+	ensureDecimalArithmeticEnabled()
+
+	const (
+		maxModule = "package test\nimport rego.v1\nresult := max(input.arr)"
+		minModule = "package test\nimport rego.v1\nresult := min(input.arr)"
+	)
+
+	badNum := Number("1e-25")
+	obj := map[string]interface{}{}
+
+	// Type ordering: number < string < object.
+	tests := []struct {
+		name   string
+		module string
+		arr    []interface{}
+		want   interface{}
+	}{
+		{"max_number_then_object", maxModule, []interface{}{badNum, obj}, map[string]interface{}{}},
+		{"min_number_then_object", minModule, []interface{}{badNum, obj}, json.Number("1e-25")},
+		{"max_object_then_number", maxModule, []interface{}{obj, badNum}, map[string]interface{}{}},
+		{"min_object_then_number", minModule, []interface{}{obj, badNum}, json.Number("1e-25")},
+		{"max_number_then_string", maxModule, []interface{}{badNum, "abc"}, "abc"},
+		{"min_number_then_string", minModule, []interface{}{badNum, "abc"}, json.Number("1e-25")},
+	}
+
+	for _, tt := range tests {
+		input := map[string]interface{}{"arr": tt.arr}
+
+		t.Run(tt.name+"_default", func(t *testing.T) {
+			rs := evalModuleResult(t, tt.module, input)
+			if got := requireSingleExprValue(t, rs); !reflect.DeepEqual(got, tt.want) {
+				t.Fatalf("got %#v, want %#v", got, tt.want)
+			}
+		})
+
+		t.Run(tt.name+"_strict", func(t *testing.T) {
+			rs, err := evalModule(t, tt.module, input, rego.StrictBuiltinErrors(true))
+			if err != nil {
+				t.Fatalf("expected no error from the fallback ordering, got %v", err)
+			}
+			if got := requireSingleExprValue(t, rs); !reflect.DeepEqual(got, tt.want) {
+				t.Fatalf("got %#v, want %#v", got, tt.want)
+			}
+		})
+	}
 }
 
 func TestDecimalOperators_EqualityFallbackForNonNumbers(t *testing.T) {
@@ -1381,6 +1563,134 @@ result := min({x | some x in input.arr})`,
 			rs := evalModuleResult(t, tt.module, tt.input)
 			if got := requireSingleExprValue(t, rs); got != tt.expected {
 				t.Fatalf("got %v (%T), want %v (%T)", got, got, tt.expected, tt.expected)
+			}
+		})
+	}
+}
+
+// TestDecimalOperators_StringCoercion_MaxMin_UnparsableNumberWithString is the
+// coercion-on counterpart of
+// TestDecimalOperators_MaxMin_UnparsableNumberWithNonNumericElement. With
+// coercion enabled a string's numeric-likeness is only known after a parse
+// attempt, which is what decides between the two outcomes:
+//
+//   - paired with a non-numeric string, the collection is not numeric-only, so
+//     the ast.Compare fallback applies and the unparsable Number's error is
+//     dropped rather than surfaced.
+//   - paired with a numeric string, every element is numeric-like, so numeric
+//     mode is kept and the error surfaces.
+func TestDecimalOperators_StringCoercion_MaxMin_UnparsableNumberWithString(t *testing.T) {
+	enableStringCoercion(t)
+
+	const (
+		maxModule = "package test\nimport rego.v1\nresult := max(input.arr)"
+		minModule = "package test\nimport rego.v1\nresult := min(input.arr)"
+	)
+
+	badNum := Number("1e-25")
+
+	t.Run("non_numeric_string_falls_back", func(t *testing.T) {
+		// Type ordering: number < string.
+		tests := []struct {
+			name   string
+			module string
+			arr    []interface{}
+			want   interface{}
+		}{
+			{"max_number_then_string", maxModule, []interface{}{badNum, "abc"}, "abc"},
+			{"min_number_then_string", minModule, []interface{}{badNum, "abc"}, json.Number("1e-25")},
+			{"max_string_then_number", maxModule, []interface{}{"abc", badNum}, "abc"},
+			{"min_string_then_number", minModule, []interface{}{"abc", badNum}, json.Number("1e-25")},
+		}
+
+		for _, tt := range tests {
+			input := map[string]interface{}{"arr": tt.arr}
+
+			t.Run(tt.name+"_default", func(t *testing.T) {
+				rs := evalModuleResult(t, tt.module, input)
+				if got := requireSingleExprValue(t, rs); !reflect.DeepEqual(got, tt.want) {
+					t.Fatalf("got %#v, want %#v", got, tt.want)
+				}
+			})
+
+			t.Run(tt.name+"_strict", func(t *testing.T) {
+				rs, err := evalModule(t, tt.module, input, rego.StrictBuiltinErrors(true))
+				if err != nil {
+					t.Fatalf("expected no error from the fallback ordering, got %v", err)
+				}
+				if got := requireSingleExprValue(t, rs); !reflect.DeepEqual(got, tt.want) {
+					t.Fatalf("got %#v, want %#v", got, tt.want)
+				}
+			})
+		}
+	})
+
+	t.Run("numeric_string_stays_numeric", func(t *testing.T) {
+		tests := []struct {
+			name   string
+			module string
+			arr    []interface{}
+		}{
+			{"max_number_then_numeric_string", maxModule, []interface{}{badNum, "2"}},
+			{"min_number_then_numeric_string", minModule, []interface{}{badNum, "2"}},
+			{"max_numeric_string_then_number", maxModule, []interface{}{"2", badNum}},
+			{"min_numeric_string_then_number", minModule, []interface{}{"2", badNum}},
+		}
+
+		for _, tt := range tests {
+			input := map[string]interface{}{"arr": tt.arr}
+
+			t.Run(tt.name+"_default_undefined", func(t *testing.T) {
+				rs := evalModuleResult(t, tt.module, input)
+				requireUndefinedResult(t, rs)
+			})
+
+			t.Run(tt.name+"_strict_error", func(t *testing.T) {
+				_, err := evalModule(t, tt.module, input, rego.StrictBuiltinErrors(true))
+				if err == nil {
+					t.Fatal("expected eval error for out-of-precision element, got nil")
+				}
+				var topdownErr *topdown.Error
+				if !errors.As(err, &topdownErr) {
+					t.Fatalf("expected topdown.Error, got %T: %v", err, err)
+				}
+				if topdownErr.Code != topdown.BuiltinErr {
+					t.Fatalf("expected %s, got %s (%v)", topdown.BuiltinErr, topdownErr.Code, err)
+				}
+			})
+		}
+	})
+}
+
+// TestDecimalOperators_StringCoercion_MaxMin_TieKeepsFirstInIterationOrder pins
+// which of two numerically tied terms max/min return when the tie is between
+// distinct coerced strings ("1.0" and "1" are equal as numbers but are different
+// terms): the first one in iteration order, which is element order for arrays
+// and OPA's sorted order for sets. Numeric mode returns the winning element's
+// own term, so the choice is visible in the result — including the fact that a
+// coerced string comes back as a string, not as a number.
+func TestDecimalOperators_StringCoercion_MaxMin_TieKeepsFirstInIterationOrder(t *testing.T) {
+	enableStringCoercion(t)
+
+	tests := []struct {
+		name   string
+		module string
+		want   interface{}
+	}{
+		{"array_max", "package test\nimport rego.v1\nresult := max(input.arr)", "1.0"},
+		{"array_min", "package test\nimport rego.v1\nresult := min(input.arr)", "1.0"},
+		// Sets iterate in sorted order, where the string "1" precedes "1.0".
+		{"set_max", "package test\nimport rego.v1\nresult := max({x | some x in input.arr})", "1"},
+		{"set_min", "package test\nimport rego.v1\nresult := min({x | some x in input.arr})", "1"},
+	}
+
+	input := map[string]interface{}{"arr": []interface{}{"1.0", "1"}}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			rs := evalModuleResult(t, tt.module, input)
+			if got := requireSingleExprValue(t, rs); got != tt.want {
+				t.Fatalf("got %v (%T), want %v (%T)", got, got, tt.want, tt.want)
 			}
 		})
 	}
