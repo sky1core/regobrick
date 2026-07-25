@@ -177,33 +177,57 @@ func assertUdecimalDefaults() {
 	}
 }
 
-func registerDecimalBuiltins() {
+// decimalBuiltinOverrides is the set of OPA builtins UseDecimalArithmetic
+// replaces, each paired with the implementation that replaces it.
+//
+// It is the only place that set is written down. registerDecimalBuiltins just
+// walks it, and the drift sentinel in opa_drift_sentinel_test.go derives its
+// expectations from it, so adding or dropping an entry here fails that test until
+// its pinned names are updated to match — which is the point, because changing
+// this set changes which OPA behavior regobrick takes over.
+//
+// A slice rather than a map, so registration order is fixed rather than varying
+// per run. The order carries no meaning today: the names are distinct, so no
+// entry can overwrite another's registration.
+var decimalBuiltinOverrides = []struct {
+	decl *ast.Builtin
+	impl topdown.BuiltinFunc
+}{
 	// Arithmetic operators
-	topdown.RegisterBuiltinFunc(ast.Plus.Name, precisionPlus)
-	topdown.RegisterBuiltinFunc(ast.Minus.Name, precisionMinus)
-	topdown.RegisterBuiltinFunc(ast.Multiply.Name, precisionMultiply)
-	topdown.RegisterBuiltinFunc(ast.Divide.Name, precisionDivide)
-	topdown.RegisterBuiltinFunc(ast.Rem.Name, precisionRem)
+	{ast.Plus, precisionPlus},
+	{ast.Minus, precisionMinus},
+	{ast.Multiply, precisionMultiply},
+	{ast.Divide, precisionDivide},
+	{ast.Rem, precisionRem},
 
 	// Comparison operators
-	topdown.RegisterBuiltinFunc(ast.GreaterThan.Name, precisionGT)
-	topdown.RegisterBuiltinFunc(ast.GreaterThanEq.Name, precisionGTE)
-	topdown.RegisterBuiltinFunc(ast.LessThan.Name, precisionLT)
-	topdown.RegisterBuiltinFunc(ast.LessThanEq.Name, precisionLTE)
-	topdown.RegisterBuiltinFunc(ast.Equal.Name, precisionEqual)
-	topdown.RegisterBuiltinFunc(ast.NotEqual.Name, precisionNotEqual)
+	{ast.GreaterThan, precisionGT},
+	{ast.GreaterThanEq, precisionGTE},
+	{ast.LessThan, precisionLT},
+	{ast.LessThanEq, precisionLTE},
+	{ast.Equal, precisionEqual},
+	{ast.NotEqual, precisionNotEqual},
 
 	// Unary operators
-	topdown.RegisterBuiltinFunc(ast.Abs.Name, precisionAbs)
-	topdown.RegisterBuiltinFunc(ast.Round.Name, precisionRound)
-	topdown.RegisterBuiltinFunc(ast.Ceil.Name, precisionCeil)
-	topdown.RegisterBuiltinFunc(ast.Floor.Name, precisionFloor)
+	{ast.Abs, precisionAbs},
+	{ast.Round, precisionRound},
+	{ast.Ceil, precisionCeil},
+	{ast.Floor, precisionFloor},
 
 	// Aggregate operators
-	topdown.RegisterBuiltinFunc(ast.Sum.Name, precisionSum)
-	topdown.RegisterBuiltinFunc(ast.Product.Name, precisionProduct)
-	topdown.RegisterBuiltinFunc(ast.Max.Name, precisionMax)
-	topdown.RegisterBuiltinFunc(ast.Min.Name, precisionMin)
+	{ast.Sum, precisionSum},
+	{ast.Product, precisionProduct},
+	{ast.Max, precisionMax},
+	{ast.Min, precisionMin},
+}
+
+// registerDecimalBuiltins installs every decimalBuiltinOverrides entry into
+// OPA's process-global builtin registry, under the name OPA declares for the
+// builtin, replacing the stock implementation registered there.
+func registerDecimalBuiltins() {
+	for _, o := range decimalBuiltinOverrides {
+		topdown.RegisterBuiltinFunc(o.decl.Name, o.impl)
+	}
 }
 
 // maxExpandedLen is the upper bound on the string length of an expanded exponent

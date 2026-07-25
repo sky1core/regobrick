@@ -13,7 +13,7 @@ import (
 // Sentinels for silent drift in the OPA version this package is built against.
 //
 // regobrick couples to OPA's builtin metadata in two places that carry no
-// version marker of their own: registerDecimalBuiltins (operator.go) replaces a
+// version marker of their own: decimalBuiltinOverrides (operator.go) replaces a
 // fixed set of builtin implementations, and FilterCapabilities (capabilities.go)
 // selects builtins by OPA's own Categories metadata. Both were written against
 // OPA v1.11.0. An OPA bump that renames a builtin, changes an arity, or adds a
@@ -21,7 +21,7 @@ import (
 // the behavior without failing anything. These tests pin that state so a bump
 // fails here, at build time, with an explanation of the decision to make.
 
-// overriddenBuiltinArity pins every OPA builtin that registerDecimalBuiltins
+// overriddenBuiltinArity pins every OPA builtin that decimalBuiltinOverrides
 // replaces, by literal name, together with the arity its implementation assumes.
 //
 // The names are string literals rather than ast.Plus.Name and friends on
@@ -31,10 +31,13 @@ import (
 // operands positionally (operands[0], operands[1]), so a signature change would
 // mean reading a missing operand or ignoring a new one.
 //
-// Scope limit: this map is maintained by hand alongside registerDecimalBuiltins.
-// It catches OPA-side drift — a rename, a removal, an arity change — but cannot
-// by itself notice a new override added to registerDecimalBuiltins without a
-// matching entry here, because topdown's builtin registry offers no way to
+// This map is maintained by hand, but it is not blind to the production side:
+// TestOverrideTableMatchesPinnedNamesAndArity compares it against
+// decimalBuiltinOverrides itself, so an override added to or dropped from that
+// table without a matching entry here fails instead of passing quietly.
+//
+// Scope limit: what remains unseen is a topdown.RegisterBuiltinFunc call made
+// outside that table, because topdown's builtin registry offers no way to
 // enumerate what this package registered into it.
 var overriddenBuiltinArity = map[string]int{
 	// Arithmetic
@@ -72,7 +75,7 @@ const overriddenBuiltinCount = 19
 func TestOverriddenBuiltinsStillExistWithPinnedArity(t *testing.T) {
 	if len(overriddenBuiltinArity) != overriddenBuiltinCount {
 		t.Fatalf("overriddenBuiltinArity has %d entries, want %d: it must list exactly the builtins "+
-			"registerDecimalBuiltins overrides, so update both together",
+			"decimalBuiltinOverrides replaces, so update both together",
 			len(overriddenBuiltinArity), overriddenBuiltinCount)
 	}
 
@@ -102,39 +105,43 @@ func TestOverriddenBuiltinsStillExistWithPinnedArity(t *testing.T) {
 	}
 }
 
-// TestOverriddenBuiltinASTVarsStillCarryPinnedNames closes the loop between the
-// literal names pinned above and the ast package variables registerDecimalBuiltins
-// actually registers through. Without it, an OPA release that repointed
-// ast.Plus.Name from "plus" to something else would leave the pinned literals
-// passing while the override moved to a different builtin, or to none.
-func TestOverriddenBuiltinASTVarsStillCarryPinnedNames(t *testing.T) {
-	// Mirrors registerDecimalBuiltins, in the same order.
-	decls := []*ast.Builtin{
-		ast.Plus, ast.Minus, ast.Multiply, ast.Divide, ast.Rem,
-		ast.GreaterThan, ast.GreaterThanEq, ast.LessThan, ast.LessThanEq, ast.Equal, ast.NotEqual,
-		ast.Abs, ast.Round, ast.Ceil, ast.Floor,
-		ast.Sum, ast.Product, ast.Max, ast.Min,
+// TestOverrideTableMatchesPinnedNamesAndArity closes the loop between the literal
+// names pinned above and decimalBuiltinOverrides (operator.go), the table
+// registerDecimalBuiltins walks. It reads the ast builtin declarations straight
+// out of that table rather than repeating them, so it fails in both directions:
+//
+//   - An OPA release that repointed ast.Plus.Name from "plus" to something else
+//     would leave the pinned literals passing while the override moved to a
+//     different builtin, or to none.
+//   - An override added to or dropped from the table changes the set of OPA
+//     behavior regobrick replaces. That is a deliberate decision, so it has to be
+//     recorded in the pin above (and in overriddenBuiltinCount) rather than
+//     landing in production with the sentinel none the wiser.
+func TestOverrideTableMatchesPinnedNamesAndArity(t *testing.T) {
+	if len(decimalBuiltinOverrides) != overriddenBuiltinCount {
+		t.Fatalf("decimalBuiltinOverrides has %d entries, want %d: an override was added or removed, "+
+			"so overriddenBuiltinArity and overriddenBuiltinCount must be updated to match, which is "+
+			"also the review of whether that builtin belongs under decimal semantics",
+			len(decimalBuiltinOverrides), overriddenBuiltinCount)
 	}
 
-	if len(decls) != overriddenBuiltinCount {
-		t.Fatalf("this test lists %d ast builtin vars, want %d: it must mirror registerDecimalBuiltins",
-			len(decls), overriddenBuiltinCount)
+	got := make(map[string]int, len(decimalBuiltinOverrides))
+	for _, o := range decimalBuiltinOverrides {
+		got[o.decl.Name] = o.decl.Decl.Arity()
 	}
-
-	got := make(map[string]int, len(decls))
-	for _, b := range decls {
-		got[b.Name] = b.Decl.Arity()
-	}
-	if len(got) != len(decls) {
-		t.Fatalf("the %d ast builtin vars registerDecimalBuiltins uses collapsed to %d distinct names, "+
-			"so at least two of them now point at the same builtin", len(decls), len(got))
+	if len(got) != len(decimalBuiltinOverrides) {
+		t.Fatalf("the %d entries of decimalBuiltinOverrides collapsed to %d distinct names, so at "+
+			"least two of them now point at the same builtin and only the last one registered wins",
+			len(decimalBuiltinOverrides), len(got))
 	}
 
 	if !reflect.DeepEqual(got, overriddenBuiltinArity) {
-		t.Errorf("the ast builtin vars registerDecimalBuiltins registers through no longer match the "+
-			"pinned names/arities.\n  from ast vars: %v\n  pinned:        %v\n"+
-			"An OPA release repointed one of these vars; confirm which builtin the override now lands "+
-			"on before updating the expectation.", sortedPairs(got), sortedPairs(overriddenBuiltinArity))
+		t.Errorf("decimalBuiltinOverrides no longer registers the pinned names/arities.\n"+
+			"  from the table: %v\n  pinned:         %v\n"+
+			"If the table was changed on purpose, update the pin above to record the decision. If it "+
+			"was not, an OPA release repointed one of the ast builtin vars the table uses; confirm "+
+			"which builtin the override now lands on before updating the expectation.",
+			sortedPairs(got), sortedPairs(overriddenBuiltinArity))
 	}
 }
 
@@ -220,7 +227,7 @@ func assertBuiltinSetPinned(t *testing.T, group string, got, want []string) {
 		"  full current set:            %v\n"+
 		"This failure is the point of the test, not a bug in it. That group is a semantic area "+
 		"UseDecimalArithmetic takes over, so each addition is a decision to make explicitly: does the "+
-		"new builtin need a decimal override in registerDecimalBuiltins (operator.go), and does "+
+		"new builtin need a decimal override in decimalBuiltinOverrides (operator.go), and does "+
 		"FilterCapabilities (capabilities.go) still select the right set? A removal matters for the "+
 		"same reason — an override registered for a name OPA no longer defines never runs. Make the "+
 		"call, then update the expectation here to match.", group, added, removed, got)

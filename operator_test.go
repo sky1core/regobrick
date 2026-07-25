@@ -253,6 +253,26 @@ func TestDecimalOperators_Comparison(t *testing.T) {
 		{"eq_false", "3.3 == 2.2", false},
 		{"neq_true", "3.3 != 2.2", true},
 		{"neq_false", "3.3 != 3.3", false},
+
+		// Strict vs non-strict at a numeric tie. Every row above compares
+		// operands of different magnitude, where > and >= (and < and <=) agree,
+		// so without these rows nothing distinguishes the strict operators from
+		// the non-strict ones.
+		{"gt_tie_false", "3.3 > 3.3", false},
+		{"lt_tie_false", "3.3 < 3.3", false},
+
+		// The same boundary on a tie only decimal arithmetic produces. Standard
+		// OPA computes 1.1 + 2.2 as 3.3000000000000000002 rather than 3.3, the
+		// big.Float residue pinned by TestStandardArithmeticIsNotOverridden in
+		// internal/opaerrparity and by the README comparison table, so it
+		// answers true for both of these where decimal arithmetic lands exactly
+		// on 3.3 and answers false.
+		//
+		// 0.1 + 0.2 would not serve here: standard OPA already returns exactly
+		// 0.3 for that sum, so both rows would agree with decimal and
+		// discriminate nothing.
+		{"gt_decimal_tie_false", "1.1 + 2.2 > 3.3", false},
+		{"lt_decimal_tie_false", "3.3 < 1.1 + 2.2", false},
 	}
 
 	for _, tt := range tests {
@@ -1855,13 +1875,20 @@ func TestDecimalOperators_Comparison_NonNumericUndefined(t *testing.T) {
 	ensureDecimalArithmeticEnabled()
 
 	// In UseDecimalArithmetic the comparison operators are numeric-only, so
-	// non-numeric comparisons should become undefined
+	// non-numeric comparisons should become undefined.
+	//
+	// Every expression here is one that standard OPA's type ordering answers
+	// true for (null < bool < number < string), so each row also fails if its
+	// operator loses its decimal override and falls back to OPA's original
+	// all-types implementation.
 	tests := []struct {
 		name string
 		expr string
 	}{
 		{"string_lt_string", `"a" < "b"`},
 		{"string_gt_number", `"hello" > 123`},
+		{"string_gte_string", `"b" >= "a"`},
+		{"string_lte_string", `"a" <= "b"`},
 	}
 
 	for _, tt := range tests {

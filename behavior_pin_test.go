@@ -38,9 +38,22 @@ func init() {
 	})
 }
 
-// Pin: with decimal arithmetic, composite (array/object) equality benefits from
-// arithmetic normalization: 0.1 + 0.2 evaluates to exactly 0.3, so the composite
-// values compare equal. Standard OPA would yield false here (big.Float residue).
+// Pin: with decimal arithmetic, 0.1 + 0.2 evaluates to exactly 0.3, and it is
+// that normalized result which composite (array/object) equality goes on to
+// compare, so these compare equal.
+//
+// What carries this pin is the arithmetic, not the equality. A composite operand
+// is not an ast.Number, so precisionEqual (operator.go) hands the pair to OPA's
+// own structural comparison rather than comparing element-wise as decimals:
+// dropping the == override leaves both cases below true, while changing the +
+// override breaks them.
+//
+// These operands do NOT distinguish decimal from standard OPA, and the pin does
+// not claim they do: standard OPA also returns exactly 0.3 for 0.1 + 0.2 and also
+// answers true for both cases below. The operands that diverge are 1.1 + 2.2 and
+// 3.3, where standard OPA's big.Float residue (3.3000000000000000002, pinned by
+// TestStandardArithmeticIsNotOverridden in internal/opaerrparity) makes
+// [1.1 + 2.2] == [3.3] false while decimal arithmetic keeps it true.
 func TestPin_CompositeEqualityAfterDecimalArithmetic(t *testing.T) {
 	ensureDecimalArithmeticEnabled()
 
@@ -71,6 +84,22 @@ func TestPin_ScalarEqualityBeyondPrecisionIsUndefined(t *testing.T) {
 	module := `package test
 import rego.v1
 result := input.a == 0.3`
+	input := map[string]any{"a": Number("0.30000000000000000000000001")}
+
+	rs := evalModuleResult(t, module, input)
+	requireUndefinedResult(t, rs)
+}
+
+// Pin: scalar != follows == at the precision limit. A number beyond udecimal's
+// 19-dp precision fails to parse, so the comparison is undefined rather than
+// true. Standard OPA would return true (the values genuinely differ), which is
+// also what makes this the case that notices != losing its decimal override.
+func TestPin_ScalarInequalityBeyondPrecisionIsUndefined(t *testing.T) {
+	ensureDecimalArithmeticEnabled()
+
+	module := `package test
+import rego.v1
+result := input.a != 0.3`
 	input := map[string]any{"a": Number("0.30000000000000000000000001")}
 
 	rs := evalModuleResult(t, module, input)
